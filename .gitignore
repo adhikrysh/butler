@@ -1,0 +1,22 @@
+# Secrets — never commit
+.env
+*.env
+**/secrets/
+
+# Hermes profile state (lives under ~/.hermes, not here) — guard against accidental copies
+state.db
+*.sqlite
+
+# Per-module runtime state (e.g. served-letter history)
+**/state/
+**/*.local.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+*.swp
