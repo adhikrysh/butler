@@ -34,6 +34,19 @@ def test_pick_unserved_excludes_served_and_resets_when_exhausted():
     assert fl.pick_unserved(pool, served=["a", "b", "c"]) in pool
 
 
+def test_format_message_is_verbatim_with_author_and_url():
+    letter = {
+        "id": "jony-ive", "title": "t", "author": "Jony Ive", "date": "2024-09-11",
+        "url": "https://letters.stevejobsarchive.com/jony-ive",
+        "text": "Hello!\n\nWorking with Steve Jobs was great.",
+    }
+    msg = fl.format_message(letter)
+    assert msg.startswith("Today's letter is from Jony Ive")
+    # body must appear unchanged (verbatim — no summarizing/truncation)
+    assert letter["text"] in msg
+    assert msg.rstrip().endswith(letter["url"])
+
+
 def test_served_roundtrip(tmp_path):
     p = tmp_path / "served.json"
     fl.save_served(p, ["x"])

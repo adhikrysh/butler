@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
-# Register all module cron schedules. Idempotent: removes a same-named job first.
-# Usage: TG_USER_ID=<your telegram id> ./register_cron.sh
+# Register all module cron schedules. Idempotent (re-runnable).
+# Usage: TG_USER_ID=<your telegram numeric id> ./register_cron.sh
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 : "${TG_USER_ID:?Set TG_USER_ID=<your telegram numeric id> before running}"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROFILE_SCRIPTS="$HOME/.hermes/profiles/butler/scripts"
+mkdir -p "$PROFILE_SCRIPTS"
 
-create() { # name schedule prompt skill
-  hermes -p butler cron remove "$1" >/dev/null 2>&1 || true
-  hermes -p butler cron create "$2" "$3" \
-    --skill "$4" --name "$1" --deliver "telegram:${TG_USER_ID}"
-}
-
-# 0 14 * * * UTC = 7:00am US Pacific (PDT, UTC-7). Cron runs on SERVER time (UTC),
-# so this reads 6am during PST winter. For DST-proof 7am, set the server timezone
-# to America/Los_Angeles and change this schedule to "0 7 * * *".
-create daily-steve-jobs-letter "0 14 * * *" \
-  "Run the steve-jobs-letter skill and deliver today's letter — the full letter text with the author and the source URL — to me." \
-  steve-jobs-letter
+# --- steve-jobs-letter -------------------------------------------------------
+# NO-AGENT job: the script's stdout is delivered to Telegram VERBATIM (no LLM
+# call, no tokens, no risk of the model altering the letter).
+# 0 14 * * * UTC = 7am US Pacific (PDT). Cron runs on server time — see README
+# for the DST caveat.
+cp "$REPO_DIR/modules/daily/steve-jobs-letter/cron/deliver.sh" \
+   "$PROFILE_SCRIPTS/steve_jobs_letter.sh"
+chmod +x "$PROFILE_SCRIPTS/steve_jobs_letter.sh"
+hermes -p butler cron remove daily-steve-jobs-letter >/dev/null 2>&1 || true
+hermes -p butler cron create "0 14 * * *" --no-agent --script steve_jobs_letter.sh \
+  --deliver "telegram:${TG_USER_ID}" --name daily-steve-jobs-letter
 
 hermes -p butler cron list

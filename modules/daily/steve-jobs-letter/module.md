@@ -1,17 +1,23 @@
 # Module: steve-jobs-letter
 
 - **Type:** proactive (scheduled push)
-- **Schedule:** `0 7 * * *` (07:00 local) → Telegram (home channel)
-- **Tools:** terminal (runs `scripts/fetch_letter.py` via `uv`)
-- **Memory:** none read/written. Runtime state only: `state/served.json` (gitignored,
-  tracks which letters were already sent; auto-resets once all are exhausted).
-- **Script ↔ skill contract (stdout JSON):**
-  `{ "id", "title", "author", "date", "url", "text" }`
+- **Schedule:** `0 14 * * *` UTC = 7:00am US Pacific (PDT) → Telegram
+- **Daily push = NO LLM.** The cron runs in `--no-agent` mode: a script produces
+  the final Telegram message and its stdout is delivered **verbatim**. Zero tokens,
+  zero latency, and the letter can't be altered/truncated by a model.
+  - Cron entrypoint: `cron/deliver.sh` → `scripts/fetch_letter.py --telegram`.
+  - Hermes resolves `--script` names under `~/.hermes/profiles/butler/scripts/`,
+    so `deliver.sh` is copied there as `steve_jobs_letter.sh` (by `bootstrap/register_cron.sh`).
+- **Interactive path:** `SKILL.md` is used only when adhi asks Butler conversationally
+  ("today's letter") — there the agent is already in the loop. The script's JSON
+  output (`{id,title,author,date,url,text}`) feeds that path.
+- **Memory:** none. Runtime state only: `state/served.json` (gitignored; tracks served
+  letters, auto-resets once all are exhausted).
 - **Cron registration (run once, or via `bootstrap/register_cron.sh`):**
   ```bash
-  butler cron create "0 7 * * *" \
-    "Run the steve-jobs-letter skill and deliver today's letter to Telegram." \
-    --skill steve-jobs-letter --name daily-steve-jobs-letter
+  cp cron/deliver.sh ~/.hermes/profiles/butler/scripts/steve_jobs_letter.sh
+  butler cron create "0 14 * * *" --no-agent --script steve_jobs_letter.sh \
+    --deliver telegram:<your-id> --name daily-steve-jobs-letter
   ```
 - **Tests:**
   ```bash

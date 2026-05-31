@@ -4,9 +4,12 @@
 # ///
 """Fetch a random, not-recently-served letter from the Steve Jobs Archive.
 
-Prints one JSON object to stdout:
+Default: prints one JSON object to stdout (for the interactive skill / tests):
   {"id","title","author","date","url","text"}
-On failure: a one-line reason to stderr and a non-zero exit code.
+With --telegram: prints the final, verbatim Telegram message (used by the
+  --no-agent cron, so the daily push costs zero LLM tokens).
+On failure: a one-line reason to stderr and a non-zero exit code (empty stdout
+  => the --no-agent cron stays silent for the day).
 
 The archive (letters.stevejobsarchive.com) is a Next.js site: the homepage
 links each letter at /<slug>, and each letter page server-renders its body as
@@ -105,6 +108,11 @@ def pick_unserved(pool: list[str], served: list[str]) -> str:
     return random.choice(remaining)
 
 
+def format_message(letter: dict) -> str:
+    """Final Telegram-ready text (delivered verbatim by the --no-agent cron)."""
+    return f"Today's letter is from {letter['author']} ✍️\n\n{letter['text']}\n\n{letter['url']}"
+
+
 def main() -> int:
     state_path = Path(os.environ.get("BUTLER_LETTER_STATE", str(DEFAULT_STATE)))
     try:
@@ -121,8 +129,11 @@ def main() -> int:
             print(f"empty letter body for {choice}", file=sys.stderr)
             return 1
         save_served(state_path, served + [choice])
-        json.dump(letter, sys.stdout)
-        sys.stdout.write("\n")
+        if "--telegram" in sys.argv[1:]:
+            sys.stdout.write(format_message(letter) + "\n")  # verbatim, no LLM
+        else:
+            json.dump(letter, sys.stdout)  # JSON for the interactive skill / tests
+            sys.stdout.write("\n")
         return 0
     except requests.RequestException as exc:
         print(f"fetch failed: {exc}", file=sys.stderr)

@@ -11,7 +11,11 @@ metadata:
 
 # Steve Jobs Letter
 
-When triggered (the daily 07:00 job, or adhi asks for "today's letter" / a Steve Jobs letter):
+> The scheduled daily 7am push is handled by a separate **no-agent** cron script
+> (verbatim, no LLM). This skill is for **interactive** requests only — when adhi
+> asks you for a letter in chat.
+
+When adhi asks for "today's letter" / a Steve Jobs letter:
 
 1. Run the fetch script (absolute path, works from any directory):
 
