@@ -11,7 +11,10 @@ create() { # name schedule prompt skill
     --skill "$4" --name "$1" --deliver "telegram:${TG_USER_ID}"
 }
 
-create daily-steve-jobs-letter "0 7 * * *" \
+# 0 14 * * * UTC = 7:00am US Pacific (PDT, UTC-7). Cron runs on SERVER time (UTC),
+# so this reads 6am during PST winter. For DST-proof 7am, set the server timezone
+# to America/Los_Angeles and change this schedule to "0 7 * * *".
+create daily-steve-jobs-letter "0 14 * * *" \
   "Run the steve-jobs-letter skill and deliver today's letter — the full letter text with the author and the source URL — to me." \
   steve-jobs-letter
 
