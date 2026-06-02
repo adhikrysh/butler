@@ -16,9 +16,9 @@ On failure: a one-line reason to stderr + non-zero exit (empty stdout => the
 --no-agent cron stays silent for the day).
 
 Sync-gate (optional): if GARMIN_SYNC_CMD is set (or --sync is passed) the script
-first triggers a watch->cloud sync via that command, then blocks until Garmin's
-cloud shows a newer device-upload timestamp than before the trigger (or until
-GARMIN_SYNC_TIMEOUT). This makes the pulled data provably fresh instead of stale.
+gates the pull on a confirmed-fresh watch upload — either firing a trigger and
+waiting for the cloud upload time to advance, or (gate-only --sync) confirming the
+last upload is recent. See _wait_for_fresh_sync. Makes the data provably fresh.
 """
 import json
 import os
@@ -81,21 +81,25 @@ def _human_age(seconds: float) -> str:
 
 
 def _wait_for_fresh_sync(g: Garmin) -> bool | None:
-    """Deterministic sync-gate: fire a sync trigger, then block until the watch's
-    cloud-upload timestamp advances past the pre-trigger baseline (proof a fresh
-    upload landed), or until timeout. Returns True (confirmed fresh), False
-    (timed out), or None (not attempted). Configured via env:
-      GARMIN_SYNC_CMD     shell command that makes the phone foreground Garmin
-                          Connect so it BLE-syncs the watch (e.g. an adb monkey
-                          launch over Tailscale, or a Tasker HTTP hook).
-      GARMIN_SYNC_TIMEOUT max seconds to wait for the upload to land (default 180)
-      GARMIN_SYNC_POLL    seconds between cloud checks (default 15)
+    """Gate the pull on a confirmed-fresh watch upload. Returns True (fresh),
+    False (timed out), or None (not attempted). Enabled by GARMIN_SYNC_CMD or --sync.
+
+    Two modes:
+      * Trigger mode (GARMIN_SYNC_CMD set): fire the command to make the phone sync the
+        watch, then wait until the cloud upload timestamp advances past the pre-trigger
+        baseline — proof THIS sync landed.
+      * Gate-only mode (--sync, no command): the sync is triggered elsewhere (e.g. an
+        iPhone Shortcut opens Garmin Connect at 07:55, a few min before this 08:00 run),
+        so just confirm the last upload is recent — within GARMIN_SYNC_MAX_AGE — polling
+        until it is or until GARMIN_SYNC_TIMEOUT.
+    Env: GARMIN_SYNC_TIMEOUT=180, GARMIN_SYNC_POLL=15, GARMIN_SYNC_MAX_AGE=1200 (secs).
     """
     trigger = os.environ.get("GARMIN_SYNC_CMD")
     if not trigger and "--sync" not in sys.argv[1:]:
         return None
     timeout = int(os.environ.get("GARMIN_SYNC_TIMEOUT", "180"))
     poll = int(os.environ.get("GARMIN_SYNC_POLL", "15"))
+    max_age = int(os.environ.get("GARMIN_SYNC_MAX_AGE", "1200"))
     baseline = _last_sync(g)[0] or 0
     if trigger:
         try:
@@ -104,13 +108,17 @@ def _wait_for_fresh_sync(g: Garmin) -> bool | None:
         except Exception as exc:  # best-effort; the gate below is the real guarantee
             print(f"sync trigger errored (continuing to poll): {exc}", file=sys.stderr)
     waited = 0
-    while waited < timeout:
-        current = _last_sync(g)[0] or 0
-        if current > baseline:
-            return True  # a newer upload reached the cloud
+    while True:
+        ts = _last_sync(g)[0] or 0
+        if trigger:
+            if ts > baseline:
+                return True  # the sync we triggered reached the cloud
+        elif ts and (datetime.now(timezone.utc).timestamp() - ts / 1000) <= max_age:
+            return True  # last upload is recent enough (Shortcut already synced it)
+        if waited >= timeout:
+            return False
         time.sleep(poll)
         waited += poll
-    return False  # no fresh upload within the window
 
 
 def _day(g: Garmin, d: str) -> dict:

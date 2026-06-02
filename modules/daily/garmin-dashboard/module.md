@@ -36,28 +36,28 @@
   the record also stores `last_sync_utc` + `device`. `request_reload(date)` only nudges
   Garmin to reprocess *already-uploaded* data (backfilling old dates) — it can't fetch new
   data off the watch.
-- **Deterministic "sync-gate" (optional, off unless `GARMIN_SYNC_CMD` or `--sync`).** To
-  pull *provably fresh* data instead of yesterday's, the script records the watch's current
-  cloud-upload time, fires a sync trigger, and **polls `get_device_last_used()` until the
-  upload time advances** (proof a fresh upload landed) or `GARMIN_SYNC_TIMEOUT` (default
-  180s) elapses — *only then* does it pull. `synced_fresh` (true/false/null) is stored in
-  the record; an unconfirmed sync adds a `⚠️ sync not confirmed` note to the summary.
+- **Deterministic "sync-gate" (ACTIVE — `cron/deliver.sh` passes `--sync`).** The script
+  polls `get_device_last_used()` and only pulls once a fresh upload is confirmed:
+  - **gate-only mode** (`--sync`, the current setup): confirms the last upload is *recent*
+    — within `GARMIN_SYNC_MAX_AGE` (default 1200s / 20 min). Pairs with the iPhone Shortcut
+    below that syncs the watch at 07:55, ~5 min before the 08:00 run.
+  - **trigger mode** (`GARMIN_SYNC_CMD` set): butler itself fires a trigger, then waits for
+    the upload time to *advance* past baseline.
+  On `GARMIN_SYNC_TIMEOUT` (180s) it pulls anyway and flags `⚠️ sync not confirmed`;
+  `synced_fresh` (true/false/null) is stored in the record.
 
   The sync must go through the **iPhone 15** — the watch is paired to it, so only it can
   push the watch's data to Garmin's cloud (the tailnet Pixel can't sync a watch it isn't
   paired to; ADB/`monkey` is Android-only and N/A). Trigger options:
-  - **Phone-side, time-based (simplest):** an **Apple Shortcuts** Personal Automation at
-    ~7:55am → *Open App → Garmin Connect* (toggle **Run Without Asking**). Then run the pull
-    in **gate-only** mode — pass `--sync` with no `GARMIN_SYNC_CMD`, so butler skips the
-    trigger and just polls until the fresh upload lands. No server→phone path needed.
-  - **Server-triggered (butler drives it):** install **Pushcut** on the iPhone, make a
-    Pushcut automation that opens Garmin Connect, and set
+  - **Phone-side, time-based (CHOSEN):** an **Apple Shortcuts** Personal Automation at
+    **07:55** daily → *Open App → Garmin Connect* (Run Without Asking). Opening the app is
+    what makes Garmin Connect BLE-sync the watch to the cloud; the gate then confirms it.
+  - **Server-triggered (alternative):** install **Pushcut** on the iPhone, make an
+    automation that opens Garmin Connect, and set
     `GARMIN_SYNC_CMD="curl -s -X POST https://api.pushcut.io/<token>/notifications/<name>"`.
-    Butler fires it right before polling.
-  Either way the **gate** is what guarantees freshness; the trigger only kicks it off. iOS
-  may need the phone awake for the app to foreground, so pick a time you're up — and the
-  gate falls back gracefully (headline last-complete-day + the ⚠️ note) on timeout. Without
-  `GARMIN_SYNC_CMD`/`--sync`, the job just pulls whatever the cloud already has.
+  iOS may need the phone awake for the app to foreground (a known iOS limit; if 07:55-locked
+  proves unreliable, switch the Shortcut trigger to "When my alarm stops"). The gate falls
+  back gracefully on timeout.
 - **Output / state (git-ignored, `**/state/`):**
   - `state/<YYYY-MM-DD>.json` — one pretty record per day (yesterday + today).
   - `state/history.jsonl` — same record appended as one line per run (the trend log).
