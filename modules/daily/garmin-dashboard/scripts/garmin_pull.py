@@ -56,6 +56,23 @@ def _safe(fn, *a):
         return None
 
 
+def _last_sync(g: Garmin):
+    """When the watch last uploaded to Garmin's cloud: (epoch_ms, device_name)."""
+    info = _safe(g.get_device_last_used) or {}
+    if not isinstance(info, dict):
+        return None, None
+    return info.get("lastUsedDeviceUploadTime"), info.get("lastUsedDeviceName")
+
+
+def _human_age(seconds: float) -> str:
+    s = int(seconds)
+    if s < 3600:
+        return f"{s // 60}m"
+    if s < 86400:
+        return f"{s // 3600}h{(s % 3600) // 60:02d}m"
+    return f"{s // 86400}d"
+
+
 def _day(g: Garmin, d: str) -> dict:
     """Clean per-day stat dict. Missing metrics -> None (watch not worn / not synced)."""
     s = _safe(g.get_stats, d) or {}
@@ -189,10 +206,14 @@ def main() -> int:
         return 1
     # Headline the last *complete* day (yesterday) for the morning summary.
     head = yday.isoformat()
+    sync_ms, device = _last_sync(g)
+    sync_dt = datetime.fromtimestamp(sync_ms / 1000, timezone.utc) if sync_ms else None
     record = {
         "captured_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": "garmin-connect-api",
         "headline_date": head,
+        "last_sync_utc": sync_dt.strftime("%Y-%m-%dT%H:%M:%SZ") if sync_dt else None,
+        "device": device,
         "stats": stats,
     }
     try:
@@ -205,7 +226,11 @@ def main() -> int:
         print(f"state write failed: {exc}", file=sys.stderr)
         return 1
     if "--telegram" in sys.argv[1:]:
-        sys.stdout.write(telegram_summary(head, stats[head]) + "\n")
+        msg = telegram_summary(head, stats[head])
+        if sync_dt:
+            age = _human_age((datetime.now(timezone.utc) - sync_dt).total_seconds())
+            msg += f"\n📡 Watch last synced {age} ago" + (f" ({device})" if device else "")
+        sys.stdout.write(msg + "\n")
     else:
         json.dump(record, sys.stdout, indent=2)
         sys.stdout.write("\n")

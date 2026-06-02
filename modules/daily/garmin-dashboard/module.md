@@ -29,9 +29,13 @@
   SpO₂. Missing metric -> `null` (watch not worn, sensor off, or not synced).
 - **Freshness / can we sync?** No — the API only *reads* Garmin's cloud; it can't make the
   watch upload. Data reaches the cloud when the Garmin Connect **phone app** syncs the
-  watch over Bluetooth (or device WiFi sync). So `today` is usually partial at 8am, which
-  is why the summary **headlines the last fully-synced day (yesterday)**. `get.request_reload(date)`
-  exists only to nudge Garmin to reprocess *already-uploaded* data (backfilling old dates).
+  watch over Bluetooth (or the watch's own **Wi-Fi auto-upload**, on supported models). So
+  `today` is usually partial at 8am, which is why the summary **headlines the last
+  fully-synced day (yesterday)**. The summary footer shows `📡 Watch last synced Xh ago`
+  (from `get_device_last_used` → `lastUsedDeviceUploadTime`) so staleness is always visible;
+  the record also stores `last_sync_utc` + `device`. `request_reload(date)` only nudges
+  Garmin to reprocess *already-uploaded* data (backfilling old dates) — it can't fetch new
+  data off the watch.
 - **Output / state (git-ignored, `**/state/`):**
   - `state/<YYYY-MM-DD>.json` — one pretty record per day (yesterday + today).
   - `state/history.jsonl` — same record appended as one line per run (the trend log).
