@@ -11,9 +11,10 @@
     by `bootstrap/register_cron.sh` (that's where `cron --script` resolves names).
 - **Why not the browser/tinyfish?** Garmin's anti-bot throws a captcha at repeated
   automated *logins*, so daily browser automation is flaky. This pulls data through
-  Garmin's real API (`garth`/`garminconnect`): authenticate **once**, reuse saved
-  OAuth tokens forever (auto-refresh), no browser, no captcha. (TinyFish MCP stays
-  installed for genuinely API-less web tasks.)
+  Garmin's real API using the `garminconnect` library (v0.3+, which does its own
+  SSO/OAuth login on `curl_cffi` — **not** garth): authenticate **once**, reuse saved
+  OAuth tokens (auto-refresh), no browser, no captcha. (TinyFish MCP stays installed
+  for genuinely API-less web tasks.)
 - **Auth / tokens:** `scripts/garmin_pull.py` resumes OAuth tokens from
   `~/.hermes/profiles/butler/garmin_tokens/` (mode 700, **not** in git). If they're
   missing/expired it falls back to a credentials login using `GARMIN_EMAIL` /

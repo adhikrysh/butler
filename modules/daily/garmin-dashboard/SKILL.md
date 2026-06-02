@@ -15,7 +15,8 @@ metadata:
 > no LLM) — `cron/deliver.sh`. This skill is for **interactive** requests only —
 > when adhi asks about his stats in chat.
 
-Data comes from Garmin's API via `garth`/`garminconnect` (no browser, no captcha).
+Data comes from Garmin's API via the `garminconnect` library — v0.3+ does its own
+SSO/OAuth login on `curl_cffi` (not garth), with token resume. No browser, no captcha.
 
 When adhi asks for his Garmin / sleep / steps / recovery stats:
 

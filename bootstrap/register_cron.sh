@@ -21,7 +21,7 @@ hermes -p butler cron create "0 14 * * *" --no-agent --script steve_jobs_letter.
   --deliver "telegram:${TG_USER_ID}" --name daily-steve-jobs-letter
 
 # --- garmin-dashboard --------------------------------------------------------
-# NO-AGENT job: garmin_pull.py hits Garmin's API (garth/garminconnect) using
+# NO-AGENT job: garmin_pull.py hits Garmin's API (garminconnect, curl_cffi auth) using
 # saved OAuth tokens — no browser, no captcha, no LLM, no TinyFish credits — and
 # its stdout (a short stats summary) is delivered to Telegram VERBATIM.
 # 0 15 * * * UTC = 8am US Pacific (PDT). Cron runs on server time — DST caveat in README.
