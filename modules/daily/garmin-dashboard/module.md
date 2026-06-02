@@ -22,11 +22,16 @@
 - **Interactive path:** `SKILL.md` is used when adhi asks Butler in chat ("my Garmin
   stats" / "how did I sleep"). The agent runs the script and relays the numbers. The
   script's JSON output (default, no `--telegram`) feeds that path.
-- **Metrics captured** (8 endpoints/day, for yesterday + today): steps (+goal),
-  resting/min/max HR, calories, floors, intensity minutes, Body Battery (recent/high/low
-  + charged/drained), stress (avg/max), sleep (duration + score), HRV, training readiness
-  (+level, recovery time), VO₂max, training status, respiration (waking/sleep/low/high),
-  SpO₂. Missing metric -> `null` (watch not worn, sensor off, or not synced).
+- **Metrics captured — everything.** Each run hits **~24 per-day endpoints** (user summary,
+  sleep + stages, HRV, stress, respiration, SpO₂, intraday + resting HR, intraday steps,
+  floors, intensity minutes, hydration, Body Battery + events, training readiness, training
+  status, max metrics, endurance score, hill score, fitness age, running tolerance,
+  activities, body composition, blood pressure) plus **3 account snapshots** (race
+  predictions, lactate threshold, personal records), for yesterday + today. Each endpoint's
+  **raw response is archived verbatim** (no field lost — for future downstream use cases);
+  a flat curated `stats` subset is derived from that raw (no extra API calls) for the
+  summary + history log. The registry lives in `scripts/garmin_pull.py` (`_DAILY`,
+  `_ACCOUNT`) — add a line to capture more. Missing metric -> `null`.
 - **Freshness / can we sync?** No — the API only *reads* Garmin's cloud; it can't make the
   watch upload. Data reaches the cloud when the Garmin Connect **phone app** syncs the
   watch over Bluetooth (or the watch's own **Wi-Fi auto-upload**, on supported models). So
@@ -59,8 +64,11 @@
   proves unreliable, switch the Shortcut trigger to "When my alarm stops"). The gate falls
   back gracefully on timeout.
 - **Output / state (git-ignored, `**/state/`):**
-  - `state/<YYYY-MM-DD>.json` — one pretty record per day (yesterday + today).
-  - `state/history.jsonl` — same record appended as one line per run (the trend log).
+  - `state/<YYYY-MM-DD>.json` — the **FULL** record incl. every endpoint's raw response
+    (~1 MB/day with intraday arrays). The complete archive for downstream use cases.
+  - `state/history.jsonl` — the **curated** flat record per run (~2 KB/line) — the lean,
+    queryable trend log. (Default stdout + the interactive skill also get curated-only, so
+    the agent context isn't flooded with raw intraday arrays.)
 - **Memory:** none. Runtime state only (the `state/` files + the token dir).
 - **Cron registration (run once, or via `bootstrap/register_cron.sh`):**
   ```bash
