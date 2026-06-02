@@ -63,6 +63,17 @@ def _day(g: Garmin, d: str) -> dict:
     sdto = (sleep.get("dailySleepDTO") or {}) if isinstance(sleep, dict) else {}
     hrv = _safe(g.get_hrv_data, d) or {}
     hrv_sum = (hrv.get("hrvSummary") or {}) if isinstance(hrv, dict) else {}
+    # Recovery / readiness / respiration / SpO2 / body-battery flux (extra endpoints).
+    tr_list = _safe(g.get_training_readiness, d) or []
+    tr = max(tr_list, key=lambda x: x.get("timestamp", "")) if isinstance(tr_list, list) and tr_list else {}
+    ts = _safe(g.get_training_status, d) or {}
+    vo2 = (ts.get("mostRecentVO2Max") or {}).get("generic") or {}
+    lts = (ts.get("mostRecentTrainingStatus") or {}).get("latestTrainingStatusData") or {}
+    ts_dev = next(iter(lts.values()), {}) if isinstance(lts, dict) else {}
+    resp = _safe(g.get_respiration_data, d) or {}
+    spo2 = _safe(g.get_spo2_data, d) or {}
+    bb_list = _safe(g.get_body_battery, d, d) or []
+    bb = bb_list[0] if isinstance(bb_list, list) and bb_list else {}
 
     def gv(*keys):
         for k in keys:
@@ -83,7 +94,7 @@ def _day(g: Garmin, d: str) -> dict:
         "max_hr_bpm": gv("maxHeartRate"),
         "calories_total": gv("totalKilocalories"),
         "calories_active": gv("activeKilocalories"),
-        "floors_climbed": gv("floorsAscended"),
+        "floors_climbed": round(gv("floorsAscended"), 1) if gv("floorsAscended") is not None else None,
         "intensity_minutes": intensity,
         "moderate_intensity_min": mod,
         "vigorous_intensity_min": vig,
@@ -96,6 +107,20 @@ def _day(g: Garmin, d: str) -> dict:
         "sleep_score": sleep_score,
         "hrv_last_night_ms": hrv_sum.get("lastNightAvg"),
         "hrv_status": hrv_sum.get("status"),
+        "training_readiness": tr.get("score"),
+        "training_readiness_level": tr.get("level"),
+        "recovery_time_hours": tr.get("recoveryTime"),
+        "vo2max": vo2.get("vo2MaxPreciseValue") or vo2.get("vo2MaxValue"),
+        "training_status": ts_dev.get("trainingStatusFeedbackPhrase"),
+        "respiration_avg_waking": resp.get("avgWakingRespirationValue"),
+        "respiration_avg_sleep": resp.get("avgSleepRespirationValue"),
+        "respiration_low": resp.get("lowestRespirationValue"),
+        "respiration_high": resp.get("highestRespirationValue"),
+        "spo2_avg": spo2.get("averageSpO2"),
+        "spo2_lowest": spo2.get("lowestSpO2"),
+        "spo2_latest": spo2.get("latestSpO2"),
+        "body_battery_charged": bb.get("charged"),
+        "body_battery_drained": bb.get("drained"),
     }
 
 
@@ -133,6 +158,17 @@ def telegram_summary(date_label: str, st: dict) -> str:
     if st.get("hrv_last_night_ms") is not None:
         status = f" ({st['hrv_status'].lower()})" if st.get("hrv_status") else ""
         lines.append(f"HRV {st['hrv_last_night_ms']} ms{status}")
+    if st.get("training_readiness") is not None:
+        lvl = f" ({st['training_readiness_level'].title()})" if st.get("training_readiness_level") else ""
+        vo2 = f" · VO₂max {st['vo2max']}" if st.get("vo2max") else ""
+        lines.append(f"Readiness {st['training_readiness']}{lvl}{vo2}")
+    r4 = []
+    if st.get("respiration_avg_waking") is not None:
+        r4.append(f"Respiration {st['respiration_avg_waking']} br/min")
+    if st.get("spo2_avg") is not None:
+        r4.append(f"SpO₂ {st['spo2_avg']}%")
+    if r4:
+        lines.append(" · ".join(r4))
     if len(lines) == 1:
         lines.append("No data synced yet.")
     return "\n".join(lines)

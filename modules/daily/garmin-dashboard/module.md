@@ -22,6 +22,16 @@
 - **Interactive path:** `SKILL.md` is used when adhi asks Butler in chat ("my Garmin
   stats" / "how did I sleep"). The agent runs the script and relays the numbers. The
   script's JSON output (default, no `--telegram`) feeds that path.
+- **Metrics captured** (8 endpoints/day, for yesterday + today): steps (+goal),
+  resting/min/max HR, calories, floors, intensity minutes, Body Battery (recent/high/low
+  + charged/drained), stress (avg/max), sleep (duration + score), HRV, training readiness
+  (+level, recovery time), VO₂max, training status, respiration (waking/sleep/low/high),
+  SpO₂. Missing metric -> `null` (watch not worn, sensor off, or not synced).
+- **Freshness / can we sync?** No — the API only *reads* Garmin's cloud; it can't make the
+  watch upload. Data reaches the cloud when the Garmin Connect **phone app** syncs the
+  watch over Bluetooth (or device WiFi sync). So `today` is usually partial at 8am, which
+  is why the summary **headlines the last fully-synced day (yesterday)**. `get.request_reload(date)`
+  exists only to nudge Garmin to reprocess *already-uploaded* data (backfilling old dates).
 - **Output / state (git-ignored, `**/state/`):**
   - `state/<YYYY-MM-DD>.json` — one pretty record per day (yesterday + today).
   - `state/history.jsonl` — same record appended as one line per run (the trend log).
