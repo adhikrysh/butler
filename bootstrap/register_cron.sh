@@ -21,15 +21,15 @@ hermes -p butler cron create "0 14 * * *" --no-agent --script steve_jobs_letter.
   --deliver "telegram:${TG_USER_ID}" --name daily-steve-jobs-letter
 
 # --- garmin-dashboard --------------------------------------------------------
-# AGENT job (NOT --no-agent): only the agent can call the tinyfish MCP
-# web-automation tool that logs into Garmin and reads the dashboard. The
-# garmin-dashboard skill tells it to run ASYNC (run_web_automation_async + poll,
-# robust for this long unattended job), extract every stat, save it under the
-# module's state/ dir, and send adhi a Telegram summary of the numbers.
+# NO-AGENT job: garmin_pull.py hits Garmin's API (garth/garminconnect) using
+# saved OAuth tokens — no browser, no captcha, no LLM, no TinyFish credits — and
+# its stdout (a short stats summary) is delivered to Telegram VERBATIM.
 # 0 15 * * * UTC = 8am US Pacific (PDT). Cron runs on server time — DST caveat in README.
+cp "$REPO_DIR/modules/daily/garmin-dashboard/cron/deliver.sh" \
+   "$PROFILE_SCRIPTS/garmin_dashboard.sh"
+chmod +x "$PROFILE_SCRIPTS/garmin_dashboard.sh"
 hermes -p butler cron remove daily-garmin-dashboard >/dev/null 2>&1 || true
-hermes -p butler cron create "0 15 * * *" \
-  "Run the daily Garmin dashboard extraction (follow the garmin-dashboard skill): read my Garmin credentials from the profile .env, use the tinyfish async web-automation tool to log into connect.garmin.com, extract today's dashboard stats, save them to the module's state/ files, and send me a short Telegram summary of the numbers." \
-  --skill garmin-dashboard --name daily-garmin-dashboard --deliver "telegram:${TG_USER_ID}"
+hermes -p butler cron create "0 15 * * *" --no-agent --script garmin_dashboard.sh \
+  --deliver "telegram:${TG_USER_ID}" --name daily-garmin-dashboard
 
 hermes -p butler cron list
