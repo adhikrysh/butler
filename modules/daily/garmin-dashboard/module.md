@@ -9,10 +9,11 @@
   - Cron entrypoint: an agent run with the `garmin-dashboard` skill attached
     (`hermes -p butler cron create "<prompt>" --skill garmin-dashboard`).
   - Registered by `bootstrap/register_cron.sh` as `daily-garmin-dashboard`.
-- **What it does (for now):** logs in, clicks through every dashboard widget, and
-  **extracts** all visible stats. It only *captures + persists* the data — what to do
-  with it (Telegram summary, trends, alerts) is deliberately left for later. So the
-  cron uses `--deliver local` (no Telegram push).
+- **What it does:** logs in (async — `run_web_automation_async` + poll, so a slow morning
+  can't time out the run), clicks through every dashboard widget, **extracts** all visible
+  stats, **saves** them to `state/`, and **sends adhi a Telegram summary** of the numbers
+  (`--deliver telegram:<id>`). The interactive "show me now" path may use synchronous
+  `run_web_automation` for speed.
 - **Credentials:** `GARMIN_EMAIL` / `GARMIN_PASSWORD` in `~/.hermes/profiles/butler/.env`
   (mode 600, git-ignored). The agent reads them via the shell and never prints the password.
 - **Output / state (git-ignored, `**/state/`):**
@@ -24,7 +25,7 @@
   hermes -p butler cron remove daily-garmin-dashboard >/dev/null 2>&1 || true
   hermes -p butler cron create "0 15 * * *" \
     "Run the daily Garmin dashboard extraction (see the garmin-dashboard skill)." \
-    --skill garmin-dashboard --name daily-garmin-dashboard --deliver local
+    --skill garmin-dashboard --name daily-garmin-dashboard --deliver "telegram:<your-id>"
   ```
 - **Manual test (one run now):**
   ```bash
