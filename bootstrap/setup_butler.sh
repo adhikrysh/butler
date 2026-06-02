@@ -25,6 +25,16 @@ terminal:
 skills:
   external_dirs:
     - $REPO_DIR/modules
+
+# MCP servers. tinyfish (web agent) authenticates with OAuth 2.1 — tokens are
+# acquired interactively on first connect, NOT stored here. After bootstrap, run:
+#   hermes -p butler mcp login tinyfish   # opens browser / paste-back over SSH
+mcp_servers:
+  tinyfish:
+    url: "https://agent.tinyfish.ai/mcp"
+    auth: oauth
+    connect_timeout: 300   # headroom for the interactive OAuth approve step
+    timeout: 300
 YAML
 
 cp "$REPO_DIR/bootstrap/SOUL.md" "$PROFILE_HOME/SOUL.md"
