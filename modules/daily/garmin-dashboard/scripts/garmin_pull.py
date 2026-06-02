@@ -14,10 +14,17 @@ Default: prints one JSON record to stdout (interactive skill / debugging).
 Either way it writes state/<pacific-date>.json and appends state/history.jsonl.
 On failure: a one-line reason to stderr + non-zero exit (empty stdout => the
 --no-agent cron stays silent for the day).
+
+Sync-gate (optional): if GARMIN_SYNC_CMD is set (or --sync is passed) the script
+first triggers a watch->cloud sync via that command, then blocks until Garmin's
+cloud shows a newer device-upload timestamp than before the trigger (or until
+GARMIN_SYNC_TIMEOUT). This makes the pulled data provably fresh instead of stale.
 """
 import json
 import os
+import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -71,6 +78,39 @@ def _human_age(seconds: float) -> str:
     if s < 86400:
         return f"{s // 3600}h{(s % 3600) // 60:02d}m"
     return f"{s // 86400}d"
+
+
+def _wait_for_fresh_sync(g: Garmin) -> bool | None:
+    """Deterministic sync-gate: fire a sync trigger, then block until the watch's
+    cloud-upload timestamp advances past the pre-trigger baseline (proof a fresh
+    upload landed), or until timeout. Returns True (confirmed fresh), False
+    (timed out), or None (not attempted). Configured via env:
+      GARMIN_SYNC_CMD     shell command that makes the phone foreground Garmin
+                          Connect so it BLE-syncs the watch (e.g. an adb monkey
+                          launch over Tailscale, or a Tasker HTTP hook).
+      GARMIN_SYNC_TIMEOUT max seconds to wait for the upload to land (default 180)
+      GARMIN_SYNC_POLL    seconds between cloud checks (default 15)
+    """
+    trigger = os.environ.get("GARMIN_SYNC_CMD")
+    if not trigger and "--sync" not in sys.argv[1:]:
+        return None
+    timeout = int(os.environ.get("GARMIN_SYNC_TIMEOUT", "180"))
+    poll = int(os.environ.get("GARMIN_SYNC_POLL", "15"))
+    baseline = _last_sync(g)[0] or 0
+    if trigger:
+        try:
+            subprocess.run(trigger, shell=True, timeout=90,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as exc:  # best-effort; the gate below is the real guarantee
+            print(f"sync trigger errored (continuing to poll): {exc}", file=sys.stderr)
+    waited = 0
+    while waited < timeout:
+        current = _last_sync(g)[0] or 0
+        if current > baseline:
+            return True  # a newer upload reached the cloud
+        time.sleep(poll)
+        waited += poll
+    return False  # no fresh upload within the window
 
 
 def _day(g: Garmin, d: str) -> dict:
@@ -197,6 +237,9 @@ def main() -> int:
     except Exception as exc:
         print(f"garmin auth failed: {exc}", file=sys.stderr)
         return 1
+    # Optional deterministic sync-gate: trigger a watch->cloud sync and wait for it
+    # to land before pulling, so the data is provably fresh (not yesterday's).
+    synced_fresh = _wait_for_fresh_sync(g)
     today = datetime.now(PACIFIC).date()
     yday = today - timedelta(days=1)
     try:
@@ -214,6 +257,7 @@ def main() -> int:
         "headline_date": head,
         "last_sync_utc": sync_dt.strftime("%Y-%m-%dT%H:%M:%SZ") if sync_dt else None,
         "device": device,
+        "synced_fresh": synced_fresh,
         "stats": stats,
     }
     try:
@@ -230,6 +274,8 @@ def main() -> int:
         if sync_dt:
             age = _human_age((datetime.now(timezone.utc) - sync_dt).total_seconds())
             msg += f"\n📡 Watch last synced {age} ago" + (f" ({device})" if device else "")
+        if synced_fresh is False:
+            msg += "  ⚠️ sync not confirmed"
         sys.stdout.write(msg + "\n")
     else:
         json.dump(record, sys.stdout, indent=2)

@@ -36,6 +36,28 @@
   the record also stores `last_sync_utc` + `device`. `request_reload(date)` only nudges
   Garmin to reprocess *already-uploaded* data (backfilling old dates) — it can't fetch new
   data off the watch.
+- **Deterministic "sync-gate" (optional, off unless `GARMIN_SYNC_CMD` or `--sync`).** To
+  pull *provably fresh* data instead of yesterday's, the script records the watch's current
+  cloud-upload time, fires a sync trigger, and **polls `get_device_last_used()` until the
+  upload time advances** (proof a fresh upload landed) or `GARMIN_SYNC_TIMEOUT` (default
+  180s) elapses — *only then* does it pull. `synced_fresh` (true/false/null) is stored in
+  the record; an unconfirmed sync adds a `⚠️ sync not confirmed` note to the summary.
+
+  The sync must go through the **iPhone 15** — the watch is paired to it, so only it can
+  push the watch's data to Garmin's cloud (the tailnet Pixel can't sync a watch it isn't
+  paired to; ADB/`monkey` is Android-only and N/A). Trigger options:
+  - **Phone-side, time-based (simplest):** an **Apple Shortcuts** Personal Automation at
+    ~7:55am → *Open App → Garmin Connect* (toggle **Run Without Asking**). Then run the pull
+    in **gate-only** mode — pass `--sync` with no `GARMIN_SYNC_CMD`, so butler skips the
+    trigger and just polls until the fresh upload lands. No server→phone path needed.
+  - **Server-triggered (butler drives it):** install **Pushcut** on the iPhone, make a
+    Pushcut automation that opens Garmin Connect, and set
+    `GARMIN_SYNC_CMD="curl -s -X POST https://api.pushcut.io/<token>/notifications/<name>"`.
+    Butler fires it right before polling.
+  Either way the **gate** is what guarantees freshness; the trigger only kicks it off. iOS
+  may need the phone awake for the app to foreground, so pick a time you're up — and the
+  gate falls back gracefully (headline last-complete-day + the ⚠️ note) on timeout. Without
+  `GARMIN_SYNC_CMD`/`--sync`, the job just pulls whatever the cloud already has.
 - **Output / state (git-ignored, `**/state/`):**
   - `state/<YYYY-MM-DD>.json` — one pretty record per day (yesterday + today).
   - `state/history.jsonl` — same record appended as one line per run (the trend log).
