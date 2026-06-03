@@ -22,16 +22,16 @@
 - **Interactive path:** `SKILL.md` is used when adhi asks Butler in chat ("my Garmin
   stats" / "how did I sleep"). The agent runs the script and relays the numbers. The
   script's JSON output (default, no `--telegram`) feeds that path.
-- **Metrics captured — everything.** Each run hits **~24 per-day endpoints** (user summary,
-  sleep + stages, HRV, stress, respiration, SpO₂, intraday + resting HR, intraday steps,
-  floors, intensity minutes, hydration, Body Battery + events, training readiness, training
-  status, max metrics, endurance score, hill score, fitness age, running tolerance,
-  activities, body composition, blood pressure) plus **3 account snapshots** (race
-  predictions, lactate threshold, personal records), for yesterday + today. Each endpoint's
-  **raw response is archived verbatim** (no field lost — for future downstream use cases);
-  a flat curated `stats` subset is derived from that raw (no extra API calls) for the
-  summary + history log. The registry lives in `scripts/garmin_pull.py` (`_DAILY`,
-  `_ACCOUNT`) — add a line to capture more. Missing metric -> `null`.
+- **Metrics captured (lean).** Each run calls only the **13 endpoints** that feed the
+  curated daily stats — user summary, sleep (+ stages), HRV, respiration, SpO₂, Body
+  Battery, training readiness, training status (VO₂max), hydration, fitness age, endurance
+  score, body composition (weight), activities — for yesterday + today, flattened into one
+  record (steps, RHR, calories, floors, intensity, stress, sleep, HRV, readiness, recovery,
+  respiration, weight, …). We deliberately do **not** archive raw intraday firehoses
+  (per-2-min HR/stress, minute-by-minute sleep): Garmin retains that history, so backfill a
+  specific day on demand if a use-case ever needs it — cheaper than photocopying ~900 KB
+  every morning. Registry: `_DAILY` in `scripts/garmin_pull.py` — add a line to capture
+  more. Missing metric -> `null`.
 - **Freshness / can we sync?** No — the API only *reads* Garmin's cloud; it can't make the
   watch upload. Data reaches the cloud when the Garmin Connect **phone app** syncs the
   watch over Bluetooth (or the watch's own **Wi-Fi auto-upload**, on supported models). So
@@ -64,11 +64,8 @@
   proves unreliable, switch the Shortcut trigger to "When my alarm stops"). The gate falls
   back gracefully on timeout.
 - **Output / state (git-ignored, `**/state/`):**
-  - `state/<YYYY-MM-DD>.json` — the **FULL** record incl. every endpoint's raw response
-    (~1 MB/day with intraday arrays). The complete archive for downstream use cases.
-  - `state/history.jsonl` — the **curated** flat record per run (~2 KB/line) — the lean,
-    queryable trend log. (Default stdout + the interactive skill also get curated-only, so
-    the agent context isn't flooded with raw intraday arrays.)
+  - `state/history.jsonl` — one curated record appended per run (~2 KB/line). The single
+    store / trend log. No per-day raw files (dropped — Garmin is the raw store of record).
 - **Memory:** none. Runtime state only (the `state/` files + the token dir).
 - **Cron registration (run once, or via `bootstrap/register_cron.sh`):**
   ```bash

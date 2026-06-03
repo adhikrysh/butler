@@ -2,28 +2,27 @@
 # requires-python = ">=3.11"
 # dependencies = ["garminconnect>=0.2.20", "tzdata"]
 # ///
-"""Pull Garmin Connect daily stats via the API — no browser, no captcha.
+"""Pull a daily Garmin Connect snapshot via the API — no browser, no captcha.
 
 Auth: resumes OAuth tokens from a token dir; if absent/expired it falls back to a
 credentials login using GARMIN_EMAIL / GARMIN_PASSWORD and re-saves tokens. The
 token dir lives in the butler profile and is never in git.
 
-Captures EVERYTHING: each run hits ~24 per-day endpoints (+ 3 account-level ones)
-for yesterday and today and stores their **raw** responses, so no field is lost
-for future downstream use. A curated `stats` subset is derived from that raw (no
-extra API calls) for the Telegram summary and quick querying.
+Lean by design: each run calls only the ~13 endpoints that feed the curated daily
+stats (steps, sleep, HRV, readiness, recovery, respiration, SpO2, hydration,
+weight, fitness age, endurance...) for yesterday + today. We do NOT archive raw
+intraday firehoses (per-2-min HR/stress, minute-by-minute sleep) — Garmin retains
+all of that on their servers, so any future intraday use-case can backfill the
+exact day on demand instead of us photocopying it every morning.
 
 Outputs:
-  * state/<today>.json    — FULL record incl. raw responses (the complete archive).
-  * state/history.jsonl   — CURATED record per run (lean, queryable trend log).
-  * stdout (default)      — CURATED JSON (for the interactive skill / debugging).
-  * stdout (--telegram)   — verbatim Telegram summary (for the --no-agent cron).
+  * state/history.jsonl  — one curated record appended per run (the trend log).
+  * stdout (default)     — the curated JSON record (interactive skill / debugging).
+  * stdout (--telegram)  — verbatim Telegram summary (for the --no-agent cron).
 On failure: one-line reason to stderr + non-zero exit (empty stdout => cron silent).
 
 Sync-gate (optional): if GARMIN_SYNC_CMD is set (or --sync is passed) the script
-gates the pull on a confirmed-fresh watch upload — either firing a trigger and
-waiting for the cloud upload time to advance, or (gate-only --sync) confirming the
-last upload is recent. See _wait_for_fresh_sync.
+gates the pull on a confirmed-fresh watch upload. See _wait_for_fresh_sync.
 """
 import json
 import os
@@ -126,57 +125,33 @@ def _wait_for_fresh_sync(g: Garmin) -> bool | None:
         waited += poll
 
 
-# --- comprehensive capture ---------------------------------------------------
-# Per-day endpoints (key -> g.method(date)). Signatures verified live against the
-# installed garminconnect; every one returns data (or an empty/None payload when
-# the metric isn't recorded that day). Raw responses are archived verbatim.
+# Only the endpoints whose data lands in the curated stats below. Intraday-only
+# endpoints (per-2-min HR/stress, minute sleep movement, etc.) are deliberately not
+# called — Garmin keeps that history, so backfill on demand if a use-case needs it.
 _DAILY = [
-    ("user_summary",        lambda g, d: g.get_stats(d)),
-    ("sleep",               lambda g, d: g.get_sleep_data(d)),
-    ("hrv",                 lambda g, d: g.get_hrv_data(d)),
-    ("stress",              lambda g, d: g.get_stress_data(d)),
-    ("respiration",         lambda g, d: g.get_respiration_data(d)),
-    ("spo2",                lambda g, d: g.get_spo2_data(d)),
-    ("heart_rate",          lambda g, d: g.get_heart_rates(d)),
-    ("resting_hr",          lambda g, d: g.get_rhr_day(d)),
-    ("steps_intraday",      lambda g, d: g.get_steps_data(d)),
-    ("floors",              lambda g, d: g.get_floors(d)),
-    ("intensity_minutes",   lambda g, d: g.get_intensity_minutes_data(d)),
-    ("hydration",           lambda g, d: g.get_hydration_data(d)),
-    ("body_battery",        lambda g, d: g.get_body_battery(d, d)),
-    ("body_battery_events", lambda g, d: g.get_body_battery_events(d)),
-    ("training_readiness",  lambda g, d: g.get_training_readiness(d)),
-    ("training_status",     lambda g, d: g.get_training_status(d)),
-    ("max_metrics",         lambda g, d: g.get_max_metrics(d)),
-    ("endurance_score",     lambda g, d: g.get_endurance_score(d)),
-    ("hill_score",          lambda g, d: g.get_hill_score(d)),
-    ("fitness_age",         lambda g, d: g.get_fitnessage_data(d)),
-    ("running_tolerance",   lambda g, d: g.get_running_tolerance(d, d)),
-    ("activities",          lambda g, d: g.get_activities_by_date(d, d)),
-    ("body_composition",    lambda g, d: g.get_body_composition(d)),
-    ("blood_pressure",      lambda g, d: g.get_blood_pressure(d, d)),
-]
-
-# Account-level snapshots (not per-day) — captured once per run.
-_ACCOUNT = [
-    ("race_predictions",  lambda g: g.get_race_predictions()),
-    ("lactate_threshold", lambda g: g.get_lactate_threshold()),
-    ("personal_records",  lambda g: g.get_personal_record()),
+    ("user_summary",       lambda g, d: g.get_stats(d)),
+    ("sleep",              lambda g, d: g.get_sleep_data(d)),
+    ("hrv",                lambda g, d: g.get_hrv_data(d)),
+    ("respiration",        lambda g, d: g.get_respiration_data(d)),
+    ("spo2",               lambda g, d: g.get_spo2_data(d)),
+    ("body_battery",       lambda g, d: g.get_body_battery(d, d)),
+    ("training_readiness", lambda g, d: g.get_training_readiness(d)),
+    ("training_status",    lambda g, d: g.get_training_status(d)),
+    ("hydration",          lambda g, d: g.get_hydration_data(d)),
+    ("fitness_age",        lambda g, d: g.get_fitnessage_data(d)),
+    ("endurance_score",    lambda g, d: g.get_endurance_score(d)),
+    ("body_composition",   lambda g, d: g.get_body_composition(d)),
+    ("activities",         lambda g, d: g.get_activities_by_date(d, d)),
 ]
 
 
-def _capture_raw(g: Garmin, d: str) -> dict:
-    """Every per-day endpoint's raw response for date d (None on per-endpoint error)."""
+def _fetch_day(g: Garmin, d: str) -> dict:
+    """Fetch the per-day endpoint responses (transient — used only to curate)."""
     return {key: _safe(fn, g, d) for key, fn in _DAILY}
 
 
-def _capture_account(g: Garmin) -> dict:
-    return {key: _safe(fn, g) for key, fn in _ACCOUNT}
-
-
 def _curate(raw: dict) -> dict:
-    """Derive a clean, flat stat dict from the raw responses (no extra API calls).
-    Missing metric -> None (watch not worn, sensor off, or not synced)."""
+    """Flatten the fetched responses into clean daily stats. Missing -> None."""
     s = raw.get("user_summary") or {}
     sleep = raw.get("sleep") or {}
     sdto = (sleep.get("dailySleepDTO") or {}) if isinstance(sleep, dict) else {}
@@ -321,38 +296,31 @@ def main() -> int:
     except Exception as exc:
         print(f"garmin auth failed: {exc}", file=sys.stderr)
         return 1
-    # Optional deterministic sync-gate: trigger a watch->cloud sync and wait for it
-    # to land before pulling, so the data is provably fresh (not yesterday's).
     synced_fresh = _wait_for_fresh_sync(g)
     today = datetime.now(PACIFIC).date()
     yday = today - timedelta(days=1)
     today_s, yday_s = today.isoformat(), yday.isoformat()
     try:
-        raw = {ds: _capture_raw(g, ds) for ds in (yday_s, today_s)}
-        account = _capture_account(g)
+        stats = {ds: _curate(_fetch_day(g, ds)) for ds in (yday_s, today_s)}
     except Exception as exc:
         print(f"garmin fetch failed: {exc}", file=sys.stderr)
         return 1
-    stats = {ds: _curate(raw[ds]) for ds in (yday_s, today_s)}
     head = yday_s  # last complete day for the morning summary
     sync_ms, device = _last_sync(g)
     sync_dt = datetime.fromtimestamp(sync_ms / 1000, timezone.utc) if sync_ms else None
-
-    base = {
+    record = {
         "captured_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": "garmin-connect-api",
         "headline_date": head,
         "last_sync_utc": sync_dt.strftime("%Y-%m-%dT%H:%M:%SZ") if sync_dt else None,
         "device": device,
         "synced_fresh": synced_fresh,
+        "stats": stats,
     }
-    curated = {**base, "stats": stats}            # lean: for stdout, history, skill
-    full = {**curated, "raw": raw, "account": account}  # complete archive: per-day file
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        (STATE_DIR / f"{today_s}.json").write_text(json.dumps(full, indent=2), encoding="utf-8")
         with (STATE_DIR / "history.jsonl").open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(curated) + "\n")
+            fh.write(json.dumps(record) + "\n")
     except OSError as exc:
         print(f"state write failed: {exc}", file=sys.stderr)
         return 1
@@ -365,7 +333,7 @@ def main() -> int:
             msg += "  ⚠️ sync not confirmed"
         sys.stdout.write(msg + "\n")
     else:
-        json.dump(curated, sys.stdout, indent=2)
+        json.dump(record, sys.stdout, indent=2)
         sys.stdout.write("\n")
     return 0
 
