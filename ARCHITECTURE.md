@@ -346,13 +346,16 @@ the box, not the repo.
 
 ## Part 6 — How a change goes live (deployment)
 
-**Where to edit:** for module work, edit **on the box** (`/home/drc/butler`) — that's where
-`uv`, Hermes, and the agent that reads your code all are. Git is your version history and
-sync layer: commit, push to GitHub, and the laptop clone pulls to stay even. (You *can* edit
-on the laptop, but then you must `git pull` on the box, because the agent reads the **box's**
-checkout — not GitHub, not your laptop.)
+**The box is a deploy-only mirror of `origin/main`.** Edit on the laptop, commit, push.
+A systemd timer (`butler-deploy.timer`) runs `bootstrap/deploy.sh` on the box every 5 min:
+it fast-forwards to `origin/main`, runs the offline test gate (rolling back on failure),
+then activates only what the diff touched, and pings Telegram ✅/❌/⚠️. So a `git push`
+**is** the deploy — nobody SSHes in. Do **not** hand-edit the box: `deploy.sh` refuses to run
+over a dirty tree (it pings you instead of clobbering), so a stray box edit just stalls
+deploys until you reconcile it.
 
-**What makes the edit take effect**, by tier:
+`deploy.sh` encodes the table below — the "to make it live, you…" column is now what it does
+for you automatically, keyed off `git diff`:
 
 | You changed… | To make it live, you… | Why |
 |---|---|---|

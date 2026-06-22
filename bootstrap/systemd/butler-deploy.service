@@ -1,0 +1,8 @@
+[Unit]
+Description=Butler pull-based self-deploy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/drc/butler/bootstrap/deploy.sh
