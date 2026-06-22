@@ -24,12 +24,12 @@ hermes -p butler cron create "0 14 * * *" --no-agent --script steve_jobs_letter.
 # NO-AGENT job: garmin_pull.py hits Garmin's API (garminconnect, curl_cffi auth) using
 # saved OAuth tokens — no browser, no captcha, no LLM, no TinyFish credits — and
 # its stdout (a short stats summary) is delivered to Telegram VERBATIM.
-# 0 15 * * * UTC = 8am US Pacific (PDT). Cron runs on server time — DST caveat in README.
+# 0 4 * * * UTC = 9pm US Pacific (PDT). Cron runs on server time — DST caveat in README.
 cp "$REPO_DIR/modules/daily/garmin-dashboard/cron/deliver.sh" \
    "$PROFILE_SCRIPTS/garmin_dashboard.sh"
 chmod +x "$PROFILE_SCRIPTS/garmin_dashboard.sh"
 hermes -p butler cron remove daily-garmin-dashboard >/dev/null 2>&1 || true
-hermes -p butler cron create "0 15 * * *" --no-agent --script garmin_dashboard.sh \
+hermes -p butler cron create "0 4 * * *" --no-agent --script garmin_dashboard.sh \
   --deliver "telegram:${TG_USER_ID}" --name daily-garmin-dashboard
 
 hermes -p butler cron list

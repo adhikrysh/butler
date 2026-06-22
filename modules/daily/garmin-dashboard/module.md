@@ -1,8 +1,8 @@
 # Module: garmin-dashboard
 
 - **Type:** proactive (scheduled push) + interactive.
-- **Schedule:** `0 15 * * *` UTC = 8:00am US Pacific (PDT) → Telegram. Cron runs on
-  server time — see README for the DST caveat (becomes 7am in PST).
+- **Schedule:** `0 4 * * *` UTC = 9:00pm US Pacific (PDT) → Telegram. Cron runs on
+  server time — see README for the DST caveat (becomes 8pm in PST).
 - **Daily push = NO LLM.** Runs in `--no-agent` mode: the script pulls stats and its
   stdout (a short summary) is delivered to Telegram **verbatim**. Zero tokens, zero
   TinyFish credits, robust.
@@ -35,8 +35,8 @@
 - **Freshness / can we sync?** No — the API only *reads* Garmin's cloud; it can't make the
   watch upload. Data reaches the cloud when the Garmin Connect **phone app** syncs the
   watch over Bluetooth (or the watch's own **Wi-Fi auto-upload**, on supported models). So
-  `today` is usually partial at 8am, which is why the summary **headlines the last
-  fully-synced day (yesterday)**. The summary footer shows `📡 Watch last synced Xh ago`
+  `today` is essentially complete by the **9pm** slot, which is why the summary
+  **headlines today** (`head = today_s`). The summary footer shows `📡 Watch last synced Xh ago`
   (from `get_device_last_used` → `lastUsedDeviceUploadTime`) so staleness is always visible;
   the record also stores `last_sync_utc` + `device`. `request_reload(date)` only nudges
   Garmin to reprocess *already-uploaded* data (backfilling old dates) — it can't fetch new
@@ -45,7 +45,7 @@
   polls `get_device_last_used()` and only pulls once a fresh upload is confirmed:
   - **gate-only mode** (`--sync`, the current setup): confirms the last upload is *recent*
     — within `GARMIN_SYNC_MAX_AGE` (default 1200s / 20 min). Pairs with the iPhone Shortcut
-    below that syncs the watch at 07:55, ~5 min before the 08:00 run.
+    below that syncs the watch at 20:55, ~5 min before the 21:00 run.
   - **trigger mode** (`GARMIN_SYNC_CMD` set): butler itself fires a trigger, then waits for
     the upload time to *advance* past baseline.
   On `GARMIN_SYNC_TIMEOUT` (180s) it pulls anyway and flags `⚠️ sync not confirmed`;
@@ -55,14 +55,14 @@
   push the watch's data to Garmin's cloud (the tailnet Pixel can't sync a watch it isn't
   paired to; ADB/`monkey` is Android-only and N/A). Trigger options:
   - **Phone-side, time-based (CHOSEN):** an **Apple Shortcuts** Personal Automation at
-    **07:55** daily → *Open App → Garmin Connect* (Run Without Asking). Opening the app is
+    **20:55** daily → *Open App → Garmin Connect* (Run Without Asking). Opening the app is
     what makes Garmin Connect BLE-sync the watch to the cloud; the gate then confirms it.
   - **Server-triggered (alternative):** install **Pushcut** on the iPhone, make an
     automation that opens Garmin Connect, and set
     `GARMIN_SYNC_CMD="curl -s -X POST https://api.pushcut.io/<token>/notifications/<name>"`.
-  iOS may need the phone awake for the app to foreground (a known iOS limit; if 07:55-locked
-  proves unreliable, switch the Shortcut trigger to "When my alarm stops"). The gate falls
-  back gracefully on timeout.
+  iOS may need the phone awake for the app to foreground (a known iOS limit; if 20:55-locked
+  proves unreliable, trigger it off a reliable evening event — e.g. arriving home or putting
+  the phone on the charger). The gate falls back gracefully on timeout.
 - **Output / state (git-ignored, `**/state/`):**
   - `state/history.jsonl` — one curated record appended per run (~2 KB/line). The single
     store / trend log. No per-day raw files (dropped — Garmin is the raw store of record).
@@ -70,7 +70,7 @@
 - **Cron registration (run once, or via `bootstrap/register_cron.sh`):**
   ```bash
   cp cron/deliver.sh ~/.hermes/profiles/butler/scripts/garmin_dashboard.sh
-  hermes -p butler cron create "0 15 * * *" --no-agent --script garmin_dashboard.sh \
+  hermes -p butler cron create "0 4 * * *" --no-agent --script garmin_dashboard.sh \
     --deliver telegram:<your-id> --name daily-garmin-dashboard
   ```
 - **Manual test (one run now):**

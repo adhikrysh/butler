@@ -305,7 +305,7 @@ def main() -> int:
     except Exception as exc:
         print(f"garmin fetch failed: {exc}", file=sys.stderr)
         return 1
-    head = yday_s  # last complete day for the morning summary
+    head = today_s  # 9pm slot: today is the complete day
     sync_ms, device = _last_sync(g)
     sync_dt = datetime.fromtimestamp(sync_ms / 1000, timezone.utc) if sync_ms else None
     record = {

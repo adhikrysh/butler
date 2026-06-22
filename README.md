@@ -26,7 +26,7 @@ A single self-hosted [Hermes Agent](https://hermes-agent.nousresearch.com/) on T
 | Module | Type | Schedule | Status |
 |--------|------|----------|--------|
 | `daily/steve-jobs-letter` | proactive | `0 14 * * *` UTC (7am US Pacific) → Telegram | ✅ live |
-| `daily/garmin-dashboard` | proactive + interactive | `0 15 * * *` UTC (8am US Pacific) → Telegram | ✅ live |
+| `daily/garmin-dashboard` | proactive + interactive | `0 4 * * *` UTC (9pm US Pacific) → Telegram | ✅ live |
 | `tools/read-aloud` | interactive (on-demand) | — (no cron) | ✅ live |
 
 > Cron runs on **server time (UTC)**. `0 14 * * *` = 7am PT (PDT). Fixed UTC drifts 1h at DST — for DST-proof timing, set the server TZ to `America/Los_Angeles` and use `0 7 * * *`.
