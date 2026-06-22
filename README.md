@@ -39,4 +39,4 @@ The box runs a **read-only mirror of `origin/main`**: you edit on the laptop, co
 - `deploy.sh` fast-forwards to `origin/main`, runs the offline test suite (the CI gate — rolling back on failure), then — driven by the diff — re-copies `SOUL.md`, re-runs `register_cron.sh`, and/or restarts the gateway **only** for the changes that need it.
 - It pings Telegram `✅` / `❌` / `⚠️` so every deploy is visible.
 
-> 🚧 **Status: designed, landing next.** The scripts (`deploy.sh`, `run_tests.sh`, `install_deploy.sh`, and the systemd units) ship in `bootstrap/`. Until then, deploy manually on the box: `git pull` → `register_cron.sh` (if a schedule or `deliver.sh` changed) → `gateway restart` (if a `SKILL.md` / `SOUL.md` / new module changed). See `ARCHITECTURE.md` Part 6.
+> ✅ **Live since 2026-06-22.** A systemd user timer runs `bootstrap/deploy.sh` every 5 min on the box: fast-forward `origin/main` → offline test gate (rollback on fail) → diff-driven restart / cron re-register → Telegram ✅/❌/⚠️. Push to `main` and the box converges within ~5 min, no SSH. One-time setup: `bootstrap/install_deploy.sh` on the box. See `ARCHITECTURE.md` Part 6.
