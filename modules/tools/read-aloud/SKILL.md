@@ -34,8 +34,11 @@ When adhi sends a **link** or **text** and asks you to read / say / voice it alo
    way."** The voice notes auto-play in order; he sets 1.5× once with Telegram's speed
    button and it sticks.
 
-4. If the script exits non-zero (couldn't fetch/extract a page), tell him plainly. For a
-   link that failed extraction, you may retry by fetching the page text yourself with the
-   **tinyfish `fetch_content`** tool and passing it via `--file`.
+4. For long articles, prefer extracting the page text first with `mcp_tinyfish_fetch_content`
+   and then chunking the extracted text for narration. See `references/web-article-fallback.md`
+   for a reliable fallback path.
+
+5. If the canonical script exits non-zero or is unavailable, tell him plainly and use the
+   extracted-text fallback rather than stopping.
 
 Never print the Cartesia key or the bot token.
