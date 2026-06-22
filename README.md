@@ -12,20 +12,31 @@ A single self-hosted [Hermes Agent](https://hermes-agent.nousresearch.com/) on T
 |------|---------|
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | **Start here.** How Hermes, deployment, the module structure, and where-everything-lives actually work — from first principles. |
 | `modules/` | The modules (skills). Wired into Hermes via `config.yaml` → `skills.external_dirs`. Source of truth. |
-| `bootstrap/` | Setup + cron-registration scripts to reproduce Butler on a fresh box. |
-| `docs/specs/` | Design specs. One per module/feature. |
+| `bootstrap/` | Setup, cron-registration, and self-deploy scripts to reproduce + auto-deploy Butler on a fresh box. |
+| `docs/` | Design specs & plans — kept **locally**, git-ignored (not tracked in this repo). |
 
 ## Status
 
 **Live.** Butler runs as a systemd service (`hermes-gateway-butler`, auto-restart + linger) on the home server, on Telegram, locked to a single allowlisted user, powered by OpenAI `gpt-5.4-mini` (BYOK).
 
 - Architecture (start here): [`ARCHITECTURE.md`](ARCHITECTURE.md)
-- Design: [`docs/specs/2026-05-31-butler-modular-agent-design.md`](docs/specs/2026-05-31-butler-modular-agent-design.md)
-- Plan: [`docs/plans/2026-05-31-butler-foundation-and-letter-module.md`](docs/plans/2026-05-31-butler-foundation-and-letter-module.md)
+- Design specs & plans live **locally** under `docs/` (git-ignored).
 
 ### Modules
 | Module | Type | Schedule | Status |
 |--------|------|----------|--------|
 | `daily/steve-jobs-letter` | proactive | `0 14 * * *` UTC (7am US Pacific) → Telegram | ✅ live |
+| `daily/garmin-dashboard` | proactive + interactive | `0 15 * * *` UTC (8am US Pacific) → Telegram | ✅ live |
+| `tools/read-aloud` | interactive (on-demand) | — (no cron) | ✅ live |
 
 > Cron runs on **server time (UTC)**. `0 14 * * *` = 7am PT (PDT). Fixed UTC drifts 1h at DST — for DST-proof timing, set the server TZ to `America/Los_Angeles` and use `0 7 * * *`.
+
+## Deployment — pull-based self-deploy
+
+The box runs a **read-only mirror of `origin/main`**: you edit on the laptop, commit, and push; the box pulls and deploys *itself*. Nobody SSHes in. A NAT'd home server should pull, not be pushed to — it needs only outbound HTTPS to GitHub, no inbound access, no stored creds.
+
+- A **systemd timer** wakes every **5 min** and runs `bootstrap/deploy.sh`.
+- `deploy.sh` fast-forwards to `origin/main`, runs the offline test suite (the CI gate — rolling back on failure), then — driven by the diff — re-copies `SOUL.md`, re-runs `register_cron.sh`, and/or restarts the gateway **only** for the changes that need it.
+- It pings Telegram `✅` / `❌` / `⚠️` so every deploy is visible.
+
+> 🚧 **Status: designed, landing next.** The scripts (`deploy.sh`, `run_tests.sh`, `install_deploy.sh`, and the systemd units) ship in `bootstrap/`. Until then, deploy manually on the box: `git pull` → `register_cron.sh` (if a schedule or `deliver.sh` changed) → `gateway restart` (if a `SKILL.md` / `SOUL.md` / new module changed). See `ARCHITECTURE.md` Part 6.

@@ -23,3 +23,6 @@ venv/
 
 # Local scratch / inspection dumps (never committed)
 scrap/
+
+# Design docs & plans — kept locally, not tracked in this repo
+docs/
