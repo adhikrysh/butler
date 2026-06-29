@@ -53,6 +53,13 @@ restart=0; crons=0
 echo "$CHANGED" | grep -q '^bootstrap/SOUL\.md$' && { cp "$REPO_DIR/bootstrap/SOUL.md" "$PROFILE/SOUL.md"; restart=1; }
 echo "$CHANGED" | grep -qE 'modules/.*/SKILL\.md$' && restart=1
 echo "$CHANGED" | grep -qE '(modules/.*/cron/deliver\.sh$|^bootstrap/register_cron\.sh$)' && crons=1
+# Config reconcile: deep-merge repo-owned config keys onto the live profile
+# config.yaml (GitOps for config — a config change ships via push, not SSH).
+echo "$CHANGED" | grep -qE '^bootstrap/(config\.overrides\.yaml|apply_config_overrides\.py)$' && {
+  if [ "$(uv run "$REPO_DIR/bootstrap/apply_config_overrides.py" "$REPO_DIR/bootstrap/config.overrides.yaml" "$PROFILE/config.yaml" 2>>"$LOG")" = changed ]; then
+    log "config overrides reconciled"; restart=1
+  fi
+}
 
 if [ "$crons" = 1 ]; then
   chat="$(grep -E '^TELEGRAM_ALLOWED_USERS=' "$PROFILE/.env" | cut -d= -f2- | cut -d, -f1)"

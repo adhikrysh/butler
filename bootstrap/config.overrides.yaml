@@ -1,0 +1,23 @@
+# Repo-owned Hermes config — the GitOps source of truth for Butler's config
+# policy. setup_butler.sh writes the full config.yaml at first boot; the deploy
+# ENFORCES the keys below on every change. Edit a value here, push, and
+# deploy.sh deep-merges it onto the live profile config.yaml + restarts the
+# gateway when something actually changed — so config ships through git, never
+# SSH. Keys NOT listed here are left untouched (Hermes defaults, OAuth/runtime
+# state, the terminal sandbox block).
+
+# Default model — a model bump ships via push, not a box edit.
+model:
+  default: gpt-5.4-mini
+
+# Write-protection: the host-side `file` toolset bypasses the read-only-repo
+# sandbox, so keep it disabled (belt-and-suspenders if Hermes regenerates the
+# enabled-toolset list on upgrade).
+agent:
+  disabled_toolsets:
+    - file
+
+# Deliver cron / no-agent output to Telegram raw — no "Job ID" + metadata
+# header/footer wrapper (Hermes wraps by default).
+cron:
+  wrap_response: false

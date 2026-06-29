@@ -19,7 +19,7 @@
   `~/.hermes/profiles/butler/garmin_tokens/` (mode 700, **not** in git). If they're
   missing/expired it falls back to a credentials login using `GARMIN_EMAIL` /
   `GARMIN_PASSWORD` from the profile `.env` and re-saves tokens. First run mints them.
-- **Interactive path:** `SKILL.md` is used when adhi asks Butler in chat ("my Garmin
+- **Interactive path:** `SKILL.md` is used when the user asks Butler in chat ("my Garmin
   stats" / "how did I sleep"). The agent runs the script and relays the numbers. The
   script's JSON output (default, no `--telegram`) feeds that path.
 - **Metrics captured (lean).** Each run calls only the **13 endpoints** that feed the

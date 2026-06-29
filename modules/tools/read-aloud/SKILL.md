@@ -1,6 +1,6 @@
 ---
 name: read-aloud
-description: Read a web article or pasted text aloud as Telegram voice messages (Cartesia, Theo's voice). Use when adhi says "read this", "say this", "voice this", "read it to me" with a link or text.
+description: Read a web article or pasted text aloud as Telegram voice messages (Cartesia, Ronald's voice). Use when the user says "read this", "say this", "voice this", "read it to me" with a link or text.
 version: 0.1.0
 metadata:
   hermes:
@@ -11,15 +11,15 @@ metadata:
 
 # Read Aloud
 
-When adhi sends a **link** or **text** and asks you to read / say / voice it aloud:
+When the user sends a **link** or **text** and asks you to read / say / voice it aloud:
 
 1. Pick the source:
    - **A URL** → use `--url`.
    - **Pasted text** → write it to a temp file and use `--file` (don't try to pass long
      text as a shell argument — quoting will break).
 
-2. Run the script. It scrapes (if a URL), chunks the text, synthesizes Theo's voice via
-   Cartesia, and **sends the voice notes to adhi itself** — you don't handle audio:
+2. Run the script. It scrapes (if a URL), chunks the text, synthesizes Ronald's voice via
+   Cartesia, and **sends the voice notes to the user itself** — you don't handle audio:
 
    ```
    # URL:

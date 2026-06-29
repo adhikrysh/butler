@@ -32,4 +32,46 @@ hermes -p butler cron remove daily-garmin-dashboard >/dev/null 2>&1 || true
 hermes -p butler cron create "0 4 * * *" --no-agent --script garmin_dashboard.sh \
   --deliver "telegram:${TG_USER_ID}" --name daily-garmin-dashboard
 
+# --- cold-outbounds follow-up digest -----------------------------------------
+# NO-AGENT: outbound.py nudges prints outreach due for follow-up; stdout
+# delivered VERBATIM (empty when nothing's due). 0 4 * * * UTC = 9pm US Pacific (PDT).
+hermes -p butler cron remove daily-crm-nudge >/dev/null 2>&1 || true   # old name, pre-split
+cp "$REPO_DIR/modules/tools/cold-outbounds/cron/deliver.sh" \
+   "$PROFILE_SCRIPTS/cold_outbounds_nudge.sh"
+chmod +x "$PROFILE_SCRIPTS/cold_outbounds_nudge.sh"
+hermes -p butler cron remove daily-cold-outbounds-nudge >/dev/null 2>&1 || true
+hermes -p butler cron create "0 4 * * *" --no-agent --script cold_outbounds_nudge.sh \
+  --deliver "telegram:${TG_USER_ID}" --name daily-cold-outbounds-nudge
+
+# --- superforecasting: daily decision check-in -------------------------------
+# NO-AGENT: forecast.py daily prints the check-in prompt + any decisions due for
+# review; stdout delivered VERBATIM. 0 3 * * * UTC = 8pm US Pacific (PDT).
+cp "$REPO_DIR/modules/tools/superforecasting/cron/deliver.sh" \
+   "$PROFILE_SCRIPTS/superforecasting_daily.sh"
+chmod +x "$PROFILE_SCRIPTS/superforecasting_daily.sh"
+hermes -p butler cron remove daily-superforecasting >/dev/null 2>&1 || true
+hermes -p butler cron create "0 3 * * *" --no-agent --script superforecasting_daily.sh \
+  --deliver "telegram:${TG_USER_ID}" --name daily-superforecasting
+
+# --- superforecasting: weekly calibration ------------------------------------
+# NO-AGENT: forecast.py calibration prints the hit-rate report. 30 3 * * 1 UTC =
+# Sunday 8:30pm US Pacific (PDT).
+cp "$REPO_DIR/modules/tools/superforecasting/cron/calibration.sh" \
+   "$PROFILE_SCRIPTS/superforecasting_calibration.sh"
+chmod +x "$PROFILE_SCRIPTS/superforecasting_calibration.sh"
+hermes -p butler cron remove weekly-superforecasting-calibration >/dev/null 2>&1 || true
+hermes -p butler cron create "30 3 * * 1" --no-agent --script superforecasting_calibration.sh \
+  --deliver "telegram:${TG_USER_ID}" --name weekly-superforecasting-calibration
+
+# --- sheet-backup: daily CSV snapshot of the spreadsheet ---------------------
+# NO-AGENT: snapshot.py writes state/backups/<tab>.csv so the server's restic→B2
+# backup captures the Sheet (the only app data living off the box). Silent on
+# success; failures print to stdout → Telegram. 0 8 * * * UTC = ~1am US Pacific.
+cp "$REPO_DIR/modules/tools/sheet-backup/cron/deliver.sh" \
+   "$PROFILE_SCRIPTS/sheet_backup.sh"
+chmod +x "$PROFILE_SCRIPTS/sheet_backup.sh"
+hermes -p butler cron remove daily-sheet-backup >/dev/null 2>&1 || true
+hermes -p butler cron create "0 8 * * *" --no-agent --script sheet_backup.sh \
+  --deliver "telegram:${TG_USER_ID}" --name daily-sheet-backup
+
 hermes -p butler cron list

@@ -5,7 +5,7 @@
 """Read a web article or pasted text aloud as Telegram voice messages.
 
 Pipeline: source (url -> trafilatura | file/stdin) -> chunk (coarse, tiny first
-chunk for a fast start) -> Cartesia TTS (sonic, Theo voice) mp3 -> ffmpeg
+chunk for a fast start) -> Cartesia TTS (sonic, Ronald voice) mp3 -> ffmpeg
 opus/ogg (static binary via imageio-ffmpeg, no system ffmpeg needed) -> Telegram
 sendVoice. One voice note per chunk, sent the moment it's encoded, so Telegram
 auto-plays them through in order.
@@ -16,7 +16,7 @@ Usage:
   echo "some text" | speak.py
 
 Env (from profile .env): CARTESIA_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USERS.
-Optional: CARTESIA_VOICE_ID (default Theo), CARTESIA_MODEL (default sonic-2),
+Optional: CARTESIA_VOICE_ID (default Ronald), CARTESIA_MODEL (default sonic-2),
 READALOUD_MAX_CHARS (700), READALOUD_FIRST_CHARS (250).
 """
 import argparse
@@ -31,7 +31,7 @@ import requests
 
 CARTESIA_TTS = "https://api.cartesia.ai/tts/bytes"
 CARTESIA_VERSION = "2024-11-13"
-THEO = "79f8b5fb-2cc8-479a-80df-29f7a7cf1a3e"  # Cartesia "Theo - Modern Narrator"
+RONALD = "5ee9feff-1265-424a-9d7f-8e4d431a12c7"  # Cartesia "Ronald - Thinker"
 MAX_CHARS = int(os.environ.get("READALOUD_MAX_CHARS", "700"))
 FIRST_CHARS = int(os.environ.get("READALOUD_FIRST_CHARS", "250"))
 
@@ -129,7 +129,7 @@ def main() -> int:
     ap.add_argument("--url")
     ap.add_argument("--file")
     ap.add_argument("--title")
-    ap.add_argument("--voice", default=os.environ.get("CARTESIA_VOICE_ID", THEO))
+    ap.add_argument("--voice", default=os.environ.get("CARTESIA_VOICE_ID", RONALD))
     ap.add_argument("--model", default=os.environ.get("CARTESIA_MODEL", "sonic-2"))
     args = ap.parse_args()
 

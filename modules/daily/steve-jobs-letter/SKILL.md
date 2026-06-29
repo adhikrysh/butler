@@ -1,6 +1,6 @@
 ---
 name: steve-jobs-letter
-description: Deliver a letter from the Steve Jobs Archive "Letters to a Young Creator". Use when adhi asks for today's letter / a Steve Jobs letter, or when the daily 07:00 job runs.
+description: Deliver a letter from the Steve Jobs Archive "Letters to a Young Creator". Use when the user asks for today's letter / a Steve Jobs letter, or when the daily 07:00 job runs.
 version: 0.1.0
 metadata:
   hermes:
@@ -12,10 +12,10 @@ metadata:
 # Steve Jobs Letter
 
 > The scheduled daily 7am push is handled by a separate **no-agent** cron script
-> (verbatim, no LLM). This skill is for **interactive** requests only — when adhi
+> (verbatim, no LLM). This skill is for **interactive** requests only — when the user
 > asks you for a letter in chat.
 
-When adhi asks for "today's letter" / a Steve Jobs letter:
+When the user asks for "today's letter" / a Steve Jobs letter:
 
 1. Run the fetch script (absolute path, works from any directory):
 
@@ -24,7 +24,7 @@ When adhi asks for "today's letter" / a Steve Jobs letter:
    ```
 
    It prints ONE JSON object: `{id, title, author, date, url, text}`.
-   If it exits non-zero (network/site change), tell adhi you couldn't fetch
+   If it exits non-zero (network/site change), tell the user you couldn't fetch
    today's letter and stop — do not invent a letter.
 
 2. Compose a short Telegram message:

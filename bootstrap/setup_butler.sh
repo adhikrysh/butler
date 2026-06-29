@@ -8,7 +8,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE_HOME="$HOME/.hermes/profiles/butler"
 
 hermes profile create butler 2>/dev/null || true
-mkdir -p "$PROFILE_HOME"
+mkdir -p "$PROFILE_HOME" "$PROFILE_HOME/state"
 
 # config.yaml — OpenAI key via an OpenAI-compatible "custom" provider.
 cat > "$PROFILE_HOME/config.yaml" <<YAML
@@ -17,14 +17,54 @@ model:
   provider: "custom"
   base_url: "https://api.openai.com/v1"
 
+agent:
+  disabled_toolsets:
+    - file            # host-side file tool bypasses the read-only sandbox — force file I/O through the terminal
+
 terminal:
-  backend: "local"
+  # Write-protection sandbox: the agent's shell runs in a docker container that
+  # mounts the repo READ-ONLY (runs code, can't edit it) + profile state/ read-write.
+  # Code changes go only through git. Gotcha: container_persistent reuses the
+  # container, so after changing volumes/forward_env below, remove the stale one:
+  #   docker ps -aq --filter ancestor=python:3.11-slim | xargs -r docker rm -f
+  # (Hermes ignores docker_extra_args/--env-file; docker_forward_env is the cred path.
+  #  Requires uv installed at \$HOME/.local/bin/uv — the slim image has none.)
+  backend: "docker"
+  docker_image: "python:3.11-slim"
+  container_persistent: true
   cwd: "."
   timeout: 180
+  docker_volumes:
+    - $REPO_DIR:$REPO_DIR:ro
+    - $PROFILE_HOME/state:$PROFILE_HOME/state:rw
+    - $PROFILE_HOME/crm_google_sa.json:$PROFILE_HOME/crm_google_sa.json:ro
+    - $HOME/.local/bin/uv:/usr/local/bin/uv:ro
+  docker_forward_env:
+    - OPENAI_API_KEY
+    - TELEGRAM_BOT_TOKEN
+    - TELEGRAM_ALLOWED_USERS
+    - CRM_SHEET_ID
+    - CRM_SA_KEY
+    - CRM_ALIASES
+    - GMAIL_ADDR
+    - GMAIL_APP_PW
+    - ICLOUD_ADDR
+    - ICLOUD_APP_PW
+    - CARTESIA_API_KEY
+    - CARTESIA_VOICE_ID
+    - GARMIN_EMAIL
+    - GARMIN_PASSWORD
+    - BUTLER_GARMIN_STATE
+    - BUTLER_LETTER_STATE
 
 skills:
   external_dirs:
     - $REPO_DIR/modules
+
+# Deliver cron/no-agent output to Telegram raw — no "Job ID" + metadata
+# header/footer wrapper (Hermes wraps by default).
+cron:
+  wrap_response: false
 
 # MCP servers. tinyfish (web agent) authenticates with OAuth 2.1 — tokens are
 # acquired interactively on first connect, NOT stored here. After bootstrap, run:

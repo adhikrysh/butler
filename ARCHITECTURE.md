@@ -1,447 +1,182 @@
 # Butler — Architecture
 
-Butler is one program on a home server that reads your Telegram messages, thinks with
-GPT, and can run code on that server. Everything below is detail about how those three
-things are wired — and, just as important, **where each piece lives and how an edit you
-make becomes live behavior.**
-
-Read it top to bottom once. By the end you'll know how the agent works, how deployment
-works, how a module is structured, and where every file sits.
+Butler is a single always-on [Hermes](https://hermes-agent.nousresearch.com/) agent on a home server. It reads Telegram, reasons with a hosted GPT model, and acts by running module scripts inside a write-protected Docker sandbox. Code ships through Git: a laptop pushes to GitHub, and the box continuously pulls `origin/main` as a read-only mirror.
 
 ---
 
-## The whole system in one picture
+## The whole system, one diagram
 
 ```
-                          YOU, on Telegram
-                                │  "today's letter"
-                                ▼
-              ┌───────────────────────────────────┐
-              │      hermes-gateway-butler         │   ← always-on process
-              │  the GATEWAY — the door to Telegram│     (a systemd service)
-              └───────────────────────────────────┘
-                                │  hands the message to…
-                                ▼
-              ┌───────────────────────────────────┐
-              │           the AGENT loop           │   GPT decides what to do
-              │  read message → pick a SKILL →     │   and calls tools to do it
-              │  run it → reply                    │
-              └───────────────────────────────────┘
-                   │              │              │
-            reads  │       reads/ │        runs  │  (real shell on the box)
-          SKILL.md │       writes │      scripts │
-                   ▼              ▼              ▼
-            ┌──────────┐   ┌──────────┐   ┌──────────────┐
-            │  SKILLS  │   │  MEMORY  │   │  the box's   │
-            │(modules) │   │ (shared) │   │  filesystem  │
-            └──────────┘   └──────────┘   └──────────────┘
+   YOU (phone)                                   EXTERNAL SERVICES (public internet)
+   ┌───────────────┐                             ┌───────────────────────────────────────────────────┐
+   │ Telegram app  │                             │ OpenAI API · gpt-5.4-mini  ◄── the MODEL (reasoning)│
+   └──────┬────────┘                             │ tinyfish MCP  ◄── search / fetch_content / web-auto │
+          │ text / voice notes                   │ Google Sheets ◄── the "butler" spreadsheet (CRM)   │
+          ▼                                       │ IMAP (Gmail/iCloud) ◄── outreach reply sync        │
+   ┌────────────────────┐                         │ Cartesia ◄── TTS (Ronald voice)                    │
+   │ Telegram Bot API   │                         └──▲────────────▲───────────────────▲────────────────┘
+   │ (cloud; default-   │            (a) HTTPS:       │            │ (b) HTTP MCP       │ (c) the scripts make
+   │  deny — only your  │            model + MCP ─────┘            │  calls (gateway)   │  these API calls
+   │  user-id is let in)│                                          │                    │
+   └──────┬─────────────┘   ════════════════════════════════════════════════════════════════════════════
+          │ long-poll       HOME SERVER  "home-server"  · Linux · one OS user: drc · reachable only via Tailscale
+          ▼                                          │                                 │
+   ┌──────────────────────────────────────────────────────────┐                       │
+   │ HERMES GATEWAY — "the brain"                              │                       │
+   │ one always-on python process (systemd user service)      │                       │
+   │   ┌──────────────────────────────────────────────────┐   │                       │
+   │   │ AGENT LOOP: msg+context ─►gpt-5.4-mini─►pick tool  │───┼──(a)(b)───────────────┘
+   │   │ ─►run it─►feed result back─►…(≤max_turns)─►reply   │   │
+   │   └──────────────────────────────────────────────────┘   │
+   │ reads SKILLs from the repo · reads/writes MEMORY in profile
+   └───────────────────────────────┬──────────────────────────┘
+                                   │ a "tool call" = run a shell command
+                                   ▼
+   ┌──────────────────────────────────────────────────────────────────────────────┐
+   │ DOCKER SANDBOX — "the hands"   (terminal.backend: docker · persistent)         │
+   │ every agent shell command `docker exec`s into this one container               │──(c)──►
+   │ image python:3.11-slim + host `uv` (mounted) runs the module scripts           │  scripts reach
+   │   ┌── mounts (this list IS the agent's write-allowlist) ───────────────────┐   │  Sheets/IMAP/
+   │   │  /home/drc/butler        READ-ONLY  ← the code  (★ THE WALL)           │   │  Cartesia
+   │   │  profile/state/          read-write ← learned notes + runtime state    │   │
+   │   │  crm_google_sa.json      read-only  ← Google Sheets auth               │   │
+   │   │  ~/.local/bin/uv         read-only  ← the PEP-723 script runner        │   │
+   │   └─────────────────────────────────────────────────────────────────────────┘ │
+   │ creds injected via `docker_forward_env`.  write to the repo → "Read-only fs" ✗ │
+   └──────────────────────────────────────────────────────────────────────────────┘
+
+   ┌── THE REPO  /home/drc/butler  (git clone of origin/main · READ-ONLY to the agent) ──────────┐
+   │ modules/   ← skills, auto-discovered via  config.yaml → skills.external_dirs                 │
+   │   tools/ppl-index   tools/cold-outbounds   tools/superforecasting   tools/read-aloud         │
+   │   daily/garmin-dashboard   daily/steve-jobs-letter        lib/sheets.py ← shared gspread     │
+   │ bootstrap/ ← setup_butler.sh · register_cron.sh · deploy.sh · SOUL.md (canonical persona)    │
+   └─────────────────────────────────────────────────────────────────────────────────────────────┘
+   ┌── THE PROFILE  ~/.hermes/profiles/butler  (data + secrets · NOT in git · agent-writable) ────┐
+   │ .env (secrets)   config.yaml (model/terminal/skills wiring)   SOUL.md (copy of bootstrap's)  │
+   │ memories/MEMORY.md (durable memory, auto-loaded)   state.db (sessions, full-text-searchable) │
+   │ state/  ← garmin-dashboard/ · steve-jobs-letter/ · learned/   sandboxes/docker/ ← container  │
+   └─────────────────────────────────────────────────────────────────────────────────────────────┘
+   ┌── CRONS  (systemd timers → Hermes scheduler, mostly "no-agent") ─────────────────────────────┐
+   │ steve-jobs-letter · garmin-dashboard · cold-outbounds-nudge · superforecasting (daily+weekly)│
+   │ no-agent = run a script, deliver its stdout to Telegram verbatim  (zero GPT tokens)          │
+   └─────────────────────────────────────────────────────────────────────────────────────────────┘
+   ════════════════════════════════════════════════════════════════════════════════════════════════
+   CI/CD — code changes happen ONLY here, never on the box   ▲ git pull --ff-only every 5 min,
+   ┌──────────────┐      git push        ┌─────────────────┴──┐  then test gate, then restart
+   │ YOUR LAPTOP  │ ───────────────────► │ GitHub origin/main  │  (bootstrap/deploy.sh via systemd timer)
+   │ (you / Claude│                      │ (source of truth)   │  the box is a read-only mirror of main
+   │  Code edit)  │                      └─────────────────────┘
+   └──────────────┘  Butler suggests improvements in chat; it never opens PRs or touches git.
 ```
 
-Three moving parts, and that's really all there is:
-
-- **The door** — the *gateway*, an always-on process that connects Telegram to the agent.
-- **The brain** — the *agent loop*, GPT deciding what to do and calling tools to do it.
-- **The hands** — a *real shell* on the server, which is how Butler runs scripts and touches files.
-
-Everything else — persona, skills, memory, schedules — just shapes how those three behave.
+**Reading it:** a Telegram message enters the **gateway** (the brain, a host process). The gateway calls the **model** (OpenAI) to reason and may call **MCP** tools (tinyfish) directly over HTTP. When it decides to run a *shell* command, that command executes inside the **docker sandbox** (the hands), where the repo is mounted **read-only** and only the profile's `state/` is writable — so module scripts run and reach Sheets/IMAP/Cartesia, but cannot edit code. Code only changes via **git** (laptop → GitHub → the box's pull-deploy). Brain on the host; hands in a read-only-code sandbox.
 
 ---
 
-## Part 1 — What is actually running
+## 1 — Substrate: box, user, network
 
-### An "agent" is a model in a loop
+- **Box:** a single Linux home server (`home-server`), reachable **only over Tailscale** (a WireGuard mesh VPN) — no public ports.
+- **User:** everything runs as one unprivileged user, `drc` (uid 1000, in `sudo`+`docker` groups; sudo is password-gated). One UID for the gateway, the crons, and the deploy — which is exactly why the write-protection had to be a container, not file permissions (DAC can't distinguish same-UID processes).
+- **Two roots that are not copies of each other:** the **repo** (`/home/drc/butler`, versioned code) and the **profile** (`~/.hermes/profiles/butler`, live data + secrets, never in git). §9 is built on this distinction.
 
-Plain GPT answers once and stops. An **agent** wraps the model in a loop: you give it a
-goal, it can call **tools** (here, a shell on the box), the tool's output is fed back in,
-and the model decides the next step — repeat until the task is done. So:
+## 2 — The gateway
 
-> **agent = a language model + tools + a loop around them.**
+**Hermes Agent** (Nous Research, open-source) is the runtime installed on the box — a Python program in a venv. **The model is not installed**; it's a hosted brain Hermes calls over the network. "Butler did X" = Hermes ran the agent loop, which called GPT, which decided X.
 
-The brain only *thinks*; the loop is what lets it *act*.
+- **Gateway = the always-on process.** `hermes-gateway-butler`, a **systemd *user* service** (linger enabled → survives logout/reboot, restarts on crash). It owns the Telegram connection, hands each message to the agent loop, ships the reply. While it's up, Butler is "online."
+- **Profile = one agent's entire world in one folder.** Config, secrets, persona, memory, schedule. Hermes can host many profiles (many agents) on one box; we run exactly one. **One profile = one Butler.** Modularity comes from teaching the *one* agent many skills, not from many agents.
+- **Model = BYOK GPT.** `gpt-5.4-mini`, reached with our own OpenAI key (`config.yaml: model.provider: custom`, `base_url: api.openai.com/v1`; key in `.env`, never leaves the box). Swapping the brain is a one-line change.
+- **SOUL.md** is the persona: a short markdown file loaded at the top of every conversation (calm, concise, "modular butler," and now: *your repo is read-only to you; suggest improvements rather than editing code*).
 
-### Hermes runs the loop
+## 3 — The agent loop + skills
 
-The loop is run by **Hermes** (Hermes Agent, open-source, from Nous Research — version
-`v0.15.1` here). Hermes is the program that's actually installed on the server. GPT is not
-installed; it's a brain Hermes calls over the network. When you read "Butler did X," it
-means *Hermes ran the agent loop, which called GPT, which decided to do X.*
+**agent = model + tools + a loop.** Plain GPT answers once; the loop lets it *act*: call a tool → feed output back → decide the next step → repeat up to `agent.max_turns` (currently 90), then reply.
 
-### The gateway is the always-on door
+- **Context window vs rate limit (two different "token" limits):** the *context window* is how much the model can hold per request (hundreds of K); the *rate limit* (TPM, tokens/minute, currently ~4M on our tier) caps how much you can *send* per minute across all calls. One Telegram message = an agent loop of *N* calls, and **each call re-sends the whole accumulated context** (history + tool outputs). So one short message can cost N×(big context) tokens — the multiplier that makes "1 message" expensive. Lean agents fight this with aggressive compaction (`context.engine: compressor`) and by truncating tool output; Butler currently does little of either.
+- **Skills (= "modules") and progressive disclosure.** A skill is a folder teaching one capability, centered on `SKILL.md` (name + a one-line *when-to-use* description + how-to). The model always sees the *list* of skill names+descriptions; it pulls a skill's full `SKILL.md` into context **only when the description matches**. ⇒ **the description line is the trigger** — a vague one means the skill silently never fires.
+- **Discovery — three sources, no registration:** (1) ~85 Hermes **built-ins**; (2) the profile's own `skills/` dir (agent-installed, `local`, *not* in git → not reproduced by a clone); (3) **our repo's `modules/`**, wired by the single line `skills.external_dirs: [/home/drc/butler/modules]`. That line is the entire bridge between repo and running agent — Hermes reads skills **in place**, no copy.
 
-The agent loop has to be reachable, 24/7, even when you're asleep. The **gateway** is the
-long-running process that listens on Telegram, hands each incoming message to the agent
-loop, and ships the reply back. It's named `hermes-gateway-butler` and is run by
-**systemd** (Linux's service manager) so it restarts on crash and starts on boot. While
-that process is up, Butler is "online." (Right now it's been up ~17h, set to survive
-reboots.)
+## 4 — The sandbox
 
-### A "profile" is one agent's entire world in one folder
+Historically Hermes' terminal ran commands directly on the host as `drc` — a real shell with full access. That let the agent edit its own skill files (it did, and it wedged deploys). Now `terminal.backend: docker`: **every agent shell command runs inside a container instead.**
 
-Everything that makes Butler *Butler* — its config, secrets, persona, memory, schedule —
-lives in a single folder called a **profile**:
+Mechanics (verified by `docker inspect`):
 
-```
-~/.hermes/profiles/butler/
-```
+- Hermes keeps **one persistent container** (`sleep infinity`, image `python:3.11-slim`, name `hermes-<hash>`) and `docker exec`s each command into it. `container_persistent: true` keeps the uv/dep cache warm.
+- **`docker_volumes` is the write-allowlist.** Repo `:ro` (the write barrier — a write returns `Read-only file system`); `profile/state/` `:rw` (learned notes + runtime state); `crm_google_sa.json` `:ro`; host `~/.local/bin/uv` `:ro` (the slim image has no uv). Hermes also auto-mounts `modules → /root/.hermes/external_skills/0:ro`, the skill dir, caches, and `/root ← sandboxes/docker/default/home`.
+- **Creds reach the container via `docker_forward_env`** (the `.env` var names). Note the dead ends: Hermes **ignores** `docker_extra_args`/`--env-file`, and `shell_init_files` runs host-side; `docker_forward_env` is the one that works.
+- **uv** runs the PEP-723 module scripts: it resolves deps (gspread, etc.) into the container cache over the network.
+- **Net effect:** the agent reads + executes all code and reaches the network. Memory/sessions are written by the *gateway* (host-side), not the shell, so the sandbox doesn't touch learning.
+- **Caveat (load-bearing): the sandbox only governs the *shell*.** Hermes' native `file` toolset writes host files *outside* the container — it bypassed the read-only mount until it was disabled (`agent.disabled_toolsets: [file]`), which forces all file I/O through the sandboxed, read-only-repo terminal. That's a denylist: any other host-side write tool would need the same treatment. The fully-robust write-barrier is filesystem ownership — the repo not writable by the gateway's OS user at all — which isn't in place yet.
+- **Gotcha:** because the container is persistent, changing volumes/env/image in `config.yaml` doesn't apply until you remove the stale container (`docker ps -aq --filter ancestor=python:3.11-slim | xargs -r docker rm -f`) and restart.
 
-Hermes can host several profiles (several different agents) on one machine, each fully
-isolated in its own folder. We run exactly one, `butler`. Hermes ties one gateway to one
-identity, so **one profile = one Butler.** This is the central design decision:
+## 5 — Modules
 
-> Modularity does **not** come from running many agents. It comes from teaching the **one**
-> agent many skills.
+Six modules + a shared lib. Each is `SKILL.md` (+ optional `scripts/`, `cron/deliver.sh`, `references/`, `module.md`):
 
-### The brain is BYOK GPT
-
-The model is **GPT (`gpt-5.4-mini`)**, reached over the network with our own OpenAI API key
-— "BYOK," bring your own key. The key lives in the profile's `.env` and never leaves the
-box. `config.yaml` names the model and points at OpenAI's API:
-
-```yaml
-model:
-  default: "gpt-5.4-mini"
-  provider: "custom"
-  base_url: "https://api.openai.com/v1"
-```
-
-Swapping in a stronger brain later (say, for a coaching module) is a one-line change here.
-
-### SOUL.md is the persona
-
-`SOUL.md` is a short markdown file loaded at the start of every conversation that tells the
-model *who it is*: calm, concise, a "modular butler," Telegram-friendly, careful with the
-real shell it's been given. It's instructions, not code — the difference between GPT and
-*Butler* is mostly this file plus the skills.
-
-### Memory is what persists
-
-By default an LLM forgets everything between messages. **Memory** is the set of files and
-the database the agent can read and write that survive across conversations:
-
-- `memories/` — curated notes the agent keeps.
-- `state.db` — a SQLite database holding past sessions, searchable with full-text search.
-
-Memory is **shared across all skills.** That's the whole point: a future Garmin module can
-write your health data into memory, and a separate gym-coach module can read it. One
-memory, many readers — that's how independent modules end up sharing context.
-
----
-
-## Part 2 — Skills are the unit of capability (a "module" is a skill)
-
-This is the most important concept, so slow down here.
-
-A **skill** is a folder that teaches the agent *one* capability. In this repo we call a
-skill a **module** — same thing, different word. A skill is mostly one markdown file,
-`SKILL.md`, containing:
-
-- a **name**,
-- a **one-line description of when to use it**, and
-- **instructions** for how to do it.
-
-Optionally it ships helper **scripts** and **reference** files alongside.
-
-### Progressive disclosure — why the description line is load-bearing
-
-The model can only consider so much text at once (its **context window** is finite).
-Pasting the full instructions of twenty skills into every conversation would crowd out the
-actual conversation. So Hermes uses **progressive disclosure**:
-
-- The agent **always** sees the short list of skill *names + descriptions*.
-- It pulls a skill's **full `SKILL.md`** into context **only when that skill looks
-  relevant** to what you asked.
-
-Consequence: the **description line is the trigger.** Write it well ("use when adhi asks
-for today's letter…") or the skill silently never fires. This is the single most common way
-a new module fails to work — a vague description.
-
-### Two ways a skill fires
-
-1. **Slash command:** you type `/steve-jobs-letter`.
-2. **Natural language:** you say "today's letter" and the description matches.
-
-Both routes run the same skill.
-
-### How Butler finds skills — `external_dirs`
-
-Hermes **auto-discovers** skills from disk — drop a folder in the right place and it
-appears, no registration step. There are **two** such places, and the distinction is the
-crux of this whole document:
-
-1. **The profile's own `skills/` dir** (`~/.hermes/profiles/butler/skills/`) — Hermes'
-   built-ins and any skill the agent writes *for itself*. We mostly leave this alone.
-2. **Our modules,** which live in **this git repo**, wired in by one line in `config.yaml`:
-
-   ```yaml
-   skills:
-     external_dirs:
-       - /home/drc/butler/modules
-   ```
-
-That one line is the entire bridge between "the repo" and "the running agent." It tells
-Hermes: *also read skills straight out of that repo folder.* **No copy is made** — the
-agent reads the files in place. Hold onto that fact; Part 5 is built on it.
-
----
-
-## Part 3 — Cron does things on a schedule
-
-A **cron job** is "run this thing at this time." Hermes has its own scheduler that can
-deliver results to Telegram. It runs in one of **two modes**, and the difference is a real
-design lever:
-
-- **Agent mode (the default):** at the scheduled time, the full agent loop wakes up, reads
-  a prompt, thinks with GPT, and acts. Flexible, but it costs tokens and the model could
-  reword or shorten the output.
-- **No-agent mode (`--no-agent`):** at the scheduled time, Hermes just runs a **script** and
-  delivers the script's **stdout to Telegram verbatim** — *no LLM call at all.*
-
-The daily letter uses **no-agent mode** on purpose. A letter should arrive exactly as
-written. Routing it through a model would mean tokens, latency, and the risk the model
-truncates or "improves" the text. A script that prints the final message and hands it
-straight to Telegram is deterministic, free, and tamper-proof. **Reach for no-agent mode
-whenever the output should be exact; reach for agent mode when you need judgment.**
-
----
-
-## Part 4 — A module up close
-
-Here's the one module we have, and the reusable shape every future module copies:
-
-```
-modules/daily/steve-jobs-letter/
-├── SKILL.md                 # required: name + description (the trigger) + how-to
-├── module.md                # our notes: type, schedule, the exact cron command, tests
-├── scripts/
-│   └── fetch_letter.py      # deterministic helper — does the real work, no LLM
-├── cron/
-│   └── deliver.sh           # the no-agent entrypoint the scheduler runs
-├── tests/
-│   ├── test_fetch_letter.py # offline tests…
-│   └── fixtures/*.html      # …against saved copies of the website (ground truth)
-└── state/
-    └── served.json          # runtime memory of which letters were sent (gitignored)
-```
-
-### The script ↔ skill contract
-
-The Python script and the skill talk through a **stable JSON shape**. `fetch_letter.py`
-prints exactly:
-
-```json
-{ "id": "...", "title": "...", "author": "...", "date": "...", "url": "...", "text": "..." }
-```
-
-As long as those field names hold, the skill and the script can change independently. This
-is the same "deterministic helper does the work, the agent just frames it" pattern that the
-future Garmin and email modules will reuse.
-
-### Two execution paths from one module
-
-The same module serves both a human and a schedule:
-
-- **Interactive (you ask in chat):** the agent is already in the loop. `SKILL.md` tells it
-  to run `fetch_letter.py`, read the JSON, write a warm one-liner, and send the letter.
-- **Scheduled (7am push):** **no agent.** `cron/deliver.sh` runs
-  `fetch_letter.py --telegram`, which prints the *final* message; Hermes sends that stdout
-  verbatim.
-
-Notice the script has two output modes — JSON for the agent path, a finished message for
-the `--telegram` path. One helper, two consumers.
-
-### Failure is silent-by-design
-
-If the website changes or the network drops, the script exits non-zero with a one-line
-reason and **empty stdout**. In no-agent mode, empty stdout means Hermes sends nothing —
-Butler stays quiet for the day rather than messaging you garbage. The interactive path
-instead tells you it couldn't fetch the letter. Never invent a letter.
-
----
-
-## Part 5 — Where everything lives (the part most worth understanding)
-
-There are **two places**, and they are not two copies of the same thing.
-
-```
-   THE REPO  (git-versioned, the source of truth)        THE PROFILE  (live runtime, NOT in git)
-   /home/drc/butler/                                      ~/.hermes/profiles/butler/
-   ─────────────────────────                              ──────────────────────────────────
-   modules/                                               config.yaml   ← the external_dirs line
-     steve-jobs-letter/                                   .env          ← secrets (keys, token)
-       SKILL.md         ◄───── external_dirs wire ──────  SOUL.md       ← a COPY of bootstrap/SOUL.md
-       scripts/*.py        (agent reads skills + runs     scripts/      ← a COPY of cron/deliver.sh
-       cron/deliver.sh      scripts straight from here)   cron + state.db ← the registered schedule
-       state/served.json ◄── runtime state (gitignored)   memories/     ← shared memory
-   bootstrap/SOUL.md ─────── copied on setup ──────────►  sessions/     ← past conversations (FTS)
-   bootstrap/*.sh                                         skills/       ← Hermes' OWN built-in skills
-   docs/, README, ARCHITECTURE.md                         logs/, gateway.pid, …
-```
-
-- **The repo** is what you *version*. It's a normal git checkout, mirrored to GitHub and
-  cloned on both the server and the laptop.
-- **The profile** is what the agent *is* — its live state. It is **not** in git. Secrets,
-  memory, and the registered schedule are born here and live only here.
-
-The agent reads your modules **directly out of the repo checkout** via the `external_dirs`
-line. So there is no separate "deploy" of your code: **the git working tree on the box *is*
-the deployment.**
-
-But — not everything works by that live pointer. There are **three deployment tiers**, and
-knowing which tier a file is in tells you *exactly* what to do after editing it.
-
-### Tier 1 — Live-from-repo (a pointer, zero copy)
-
-`SKILL.md` files and `scripts/*.py`. The agent reads them in place. The Python is *extra*
-live: it's invoked as `uv run /…/fetch_letter.py`, which reads the file off disk on **every
-run**. **Edit a script → the next run already has the change. No restart, nothing.**
-
-### Tier 2 — Copy-on-deploy (the repo is canonical; the profile holds a stale copy)
-
-`SOUL.md` and the cron wrapper `deliver.sh`. Hermes insists on finding these at **fixed
-profile paths** — the persona at `profile/SOUL.md`, and `cron --script <name>` resolves only
-under `profile/scripts/`. It won't follow a pointer into your repo. So the bootstrap scripts
-**copy** them out:
-
-- `bootstrap/setup_butler.sh`: copies `bootstrap/SOUL.md` → `profile/SOUL.md`
-- `bootstrap/register_cron.sh`: copies `cron/deliver.sh` → `profile/scripts/steve_jobs_letter.sh`
-
-The mechanism forces the consequence: **edit `bootstrap/SOUL.md` in the repo and nothing
-changes until you re-copy it.** The profile holds a photograph that goes stale the moment
-you edit the original. (Clever detail: the copied `deliver.sh` is a *thin* wrapper that
-points back at the repo's Python, so only the tiny shell stub is duplicated; the real logic
-stays Tier 1.)
-
-### Tier 3 — Runtime-only state (never in the repo at all)
-
-The registered cron job, the `.env` secrets, the shared memory (`memories/`, `state.db`),
-and `served.json`. These are **born on the box.** The repo can only *reproduce* them —
-`register_cron.sh` re-creates the schedule, `setup_butler.sh` prompts for the secrets — but
-the live values exist nowhere in git. The schedule, for instance, is a row inside
-`state.db`; the repo only remembers the *command* that creates it.
-
-### One trap worth memorizing
-
-`served.json` sits at `modules/daily/steve-jobs-letter/state/served.json` — physically
-**inside** the repo tree, but **gitignored** (`.gitignore` has `**/state/`). So a Tier-3
-runtime file lives inside a Tier-1 folder. Don't let the path fool you: that file belongs to
-the box, not the repo.
-
-### The full map
-
-| Path | Tier | What it is |
-|------|------|------------|
-| `modules/**/SKILL.md` | 1 live | The skill the agent reads (its trigger + how-to) |
-| `modules/**/scripts/*.py` | 1 live | Deterministic helpers, run fresh each time |
-| `modules/**/module.md` | — | Our notes (type, schedule, cron command, tests). Docs only |
-| `modules/**/cron/deliver.sh` | 2 copy | No-agent entrypoint; copied into the profile |
-| `modules/**/state/*.json` | 3 state | Runtime state, gitignored, lives on the box |
-| `bootstrap/SOUL.md` | 2 copy | Canonical persona; copied to `profile/SOUL.md` |
-| `bootstrap/setup_butler.sh` | — | Recreates the profile on a fresh box |
-| `bootstrap/register_cron.sh` | — | Recreates all schedules from the repo |
-| `profile/config.yaml` | 3 state | Model, terminal, and the `external_dirs` wire |
-| `profile/.env` | 3 state | Secrets: OpenAI key, Telegram token, allowlist |
-| `profile/state.db` | 3 state | Sessions (FTS) + registered cron jobs |
-
----
-
-## Part 6 — How a change goes live (deployment)
-
-**The box is a deploy-only mirror of `origin/main`.** Edit on the laptop, commit, push.
-A systemd timer (`butler-deploy.timer`) runs `bootstrap/deploy.sh` on the box every 5 min:
-it fast-forwards to `origin/main`, runs the offline test gate (rolling back on failure),
-then activates only what the diff touched, and pings Telegram ✅/❌/⚠️. So a `git push`
-**is** the deploy — nobody SSHes in. Do **not** hand-edit the box: `deploy.sh` refuses to run
-over a dirty tree (it pings you instead of clobbering), so a stray box edit just stalls
-deploys until you reconcile it.
-
-`deploy.sh` encodes the table below — the "to make it live, you…" column is now what it does
-for you automatically, keyed off `git diff`:
-
-| You changed… | To make it live, you… | Why |
+| Module | Type | Backed by |
 |---|---|---|
-| a `scripts/*.py` | do nothing | run fresh via `uv run` every time |
-| a `SKILL.md` (text or frontmatter) | `gateway restart` | skills are snapshotted into the prompt at start |
-| added a **new** module folder | `gateway restart` | discovery happens at start |
-| `bootstrap/SOUL.md` | re-copy it, then `gateway restart` | Tier 2: the profile holds a copy |
-| `cron/deliver.sh` or a schedule | re-run `register_cron.sh` | Tier 2 copy + Tier 3 state |
-| a secret in `.env` | `gateway restart` | loaded at start |
+| `tools/ppl-index` | interactive | `ppl-index` Sheet tab — people you know; tinyfish-driven auto-enrichment |
+| `tools/cold-outbounds` | interactive + cron | `cold-outbounds` tab — outreach log, follow-up nudge, IMAP reply sync |
+| `tools/superforecasting` | interactive + cron×2 | `superforecasting` tab — decision journal + calibration |
+| `tools/read-aloud` | interactive | Cartesia TTS → Telegram voice notes |
+| `daily/garmin-dashboard` | cron + interactive | Garmin API → daily stats + trend log (state in profile) |
+| `daily/steve-jobs-letter` | cron (no-agent) | Steve Jobs Archive scrape; never-repeating letter |
+| `tools/sheet-backup` | cron (no-agent) | daily CSV snapshot of the Sheet tabs → profile, for the restic→B2 backup; no `SKILL.md` (not agent-invocable) |
+| `modules/lib/sheets.py` | — | shared gspread wrapper (header-row-is-schema + retry); imported by the three Sheet modules via a `sys.path` shim |
 
-Restart command:
+- **Split by capability, not table.** `ppl-index` (contact store) and `cold-outbounds` (outreach engine: nudges + IMAP sync + reply-status logic) were one `crm` module; splitting them put the heavy email machinery in its own box. Cross-tab "who is X" is composed by the *agent* calling both modules — they stay independent (no shared-find coupling).
+- **Script ↔ skill contract.** Scripts print a stable JSON shape to stdout; the skill reasons over it. Scripts run via `uv run …`, reading off disk each invocation — pure, fixture-tested, no LLM. A script with a `--telegram` mode prints the *final* message for the no-agent cron path; default mode prints JSON for the interactive path. One helper, two consumers.
+- **Failure is silent-by-design** for no-agent paths: non-zero exit + empty stdout → Hermes sends nothing (better than messaging garbage).
 
-```bash
-hermes -p butler gateway restart      # ('butler …' is the same thing if the alias is set)
-```
+## 6 — Tools beyond the shell: MCP
 
----
+**tinyfish** is an MCP server (remote, `agent.tinyfish.ai`, OAuth) the *gateway* calls over HTTP — not via the shell sandbox. 17 tools; the enrichment-relevant ones: `search` (free), `fetch_content` (free, markdown), `run_web_automation` (renders/clicks JS- and auth-walled pages like LinkedIn/X — the thing a plain fetch can't do), `batch_create`. Because MCP is gateway-side, the sandbox doesn't affect it.
 
-## Part 7 — End to end: the 7am letter
+## 7 — Memory & state
 
-Every hop, no magic:
+- **Built-in memory:** `memories/MEMORY.md` (+ `USER.md`), always-on, **auto-loaded into context every session** but **capped (~2,200 chars)** with auto-prune — a small, self-maintaining scratchpad for short lessons. (Its smallness is *why* the agent once wrote reference docs into the repo: they didn't fit memory.)
+- **Sessions:** `state.db` (SQLite, full-text-searchable past conversations + registered cron rows).
+- **Learned notes (longer):** `profile/state/learned/` — agent-writable (it's on the rw mount), off the read-only repo.
+- **Module runtime state** lives in the profile too (`state/garmin-dashboard/history.jsonl`, `state/steve-jobs-letter/served.json`), pointed at by `BUTLER_*_STATE` env vars so the repo stays pure read-only code.
 
-1. **systemd** keeps `hermes-gateway-butler` running (enabled, survives reboot).
-2. At `0 14 * * *` UTC (= 7am US Pacific), Hermes' scheduler fires the job
-   `daily-steve-jobs-letter` in **no-agent** mode.
-3. It runs `profile/scripts/steve_jobs_letter.sh` — the Tier-2 **copy** — which `exec`s
-   `uv run /…/modules/daily/steve-jobs-letter/scripts/fetch_letter.py --telegram` — the
-   Tier-1 **live** script in the repo.
-4. The script scrapes the archive, picks a letter **not** already in `state/served.json`
-   (resetting once all are used), appends its choice to that file (Tier-3 state), and prints
-   the finished message to **stdout**.
-5. Because the job is `--no-agent`, Hermes delivers that stdout **verbatim** to
-   `telegram:<your-id>`. **Zero GPT tokens** — no model ever touches the letter.
+Memory is **shared across skills** — one store, many readers (a context-provider module writes; others read).
 
-That's the whole system exercising every part: service → scheduler → copied wrapper → live
-script → runtime state → Telegram.
+## 8 — Cron
 
----
+Hermes' scheduler runs jobs in **agent mode** (wakes the full loop — flexible, costs tokens, model may reword) or **no-agent mode** (runs a script, delivers stdout to Telegram **verbatim** — deterministic, free, tamper-proof). Use no-agent when the output must be exact (the letter), agent when you need judgment. `cron.wrap_response: false` strips Hermes' default `Job ID` + metadata header/footer, so "verbatim" really is verbatim.
 
-## Part 8 — Adding a new module (the recipe)
+**Gotcha:** no-agent crons run with `HOME=<profile>/home` (a sandboxed home), so `~`/`$HOME/.hermes/...` resolve wrong. `cron/deliver.sh` sources the profile `.env` and references the SA key by **absolute path** (`CRM_SA_KEY`) for this reason.
 
-Because modules are read live from the repo and share one memory, adding a use case touches
-**nothing else.** The steps:
+## 9 — Repo vs profile, and the three tiers
 
-1. **Copy the shape.** `modules/<category>/<name>/` with a `SKILL.md` (name + a sharp
-   *when-to-use* description + how-to). Add `scripts/` if it needs deterministic work,
-   `module.md` for your notes.
-2. **Pick the module type:**
-   - **Interactive** — skill only; the agent runs it when you ask. (e.g. gym coach)
-   - **Proactive** — add `cron/deliver.sh` and a line in `register_cron.sh`. Use
-     **no-agent** if the output should be exact, **agent** if it needs judgment.
-   - **Context-provider** — a script that refreshes data into shared **memory** for other
-     modules to read. (e.g. Garmin)
-3. **Test in three rungs:** the script alone (offline, against saved fixtures) → the skill
-   from chat → the schedule with a near-future one-shot before the real time.
-4. **Make it live:** commit, push, `git pull` on the box if you edited elsewhere, then
-   `gateway restart`. For a scheduled module, also run `register_cron.sh`.
+The agent reads modules **straight out of the repo checkout** (the `external_dirs` pointer) — so the git working tree on the box *is* the deployment for code. But not everything is a live pointer; which **tier** a file is in tells you what to do after editing:
 
-That small, fixed surface area — drop a folder, restart — is the entire reason this design
-lets capabilities grow one at a time without disturbing the ones already working.
+- **Tier 1 — live-from-repo (zero copy):** `SKILL.md` + `scripts/*.py`. Scripts run via `uv run` → re-read off disk every run; edit → next run has it (a `gateway restart` re-snapshots `SKILL.md` text into the prompt).
+- **Tier 2 — copy-on-deploy:** `bootstrap/SOUL.md` → `profile/SOUL.md`, and `cron/deliver.sh` → `profile/scripts/<name>.sh`. Hermes wants these at fixed profile paths; the deploy re-copies them. The copied `deliver.sh` is a thin wrapper that `exec`s back into the repo's Tier-1 Python.
+- **Tier 2b — config (merge-on-deploy):** `config.yaml` is profile state, born once from `setup_butler.sh` and otherwise outside git — so a config change used to mean an SSH edit. `bootstrap/config.overrides.yaml` closes that seam: it holds only the keys the repo owns (model, `agent.disabled_toolsets`, `cron.wrap_response`), and the deploy deep-merges them onto the live `config.yaml` via `apply_config_overrides.py` (ruamel round-trip — preserves every other key, comment, and Hermes runtime field). Edit the override, push, and the deploy enforces it.
+- **Tier 3 — runtime-only (never in git):** `.env`, `config.yaml`, `memories/`, `state.db`, the registered cron rows, `profile/state/*`. Born on the box; the repo can only *reproduce* them (`setup_butler.sh`, `register_cron.sh`).
+
+## 10 — CI/CD: how code goes live
+
+**The box is a read-only mirror of `origin/main`.** Edit on the laptop → commit → `git push`. A systemd timer runs `bootstrap/deploy.sh` every 5 min: `git fetch` → **ff-only** → offline **test gate** (`run_tests.sh`; rollback on failure) → diff-driven activation (re-copy `SOUL.md` / reconcile config overrides / re-register crons / `gateway restart` only as needed) → Telegram ✅/❌/⚠️ ping. **`git push` is the deploy; nobody SSHes in to change code — or config.**
+
+- **The agent can't change prod.** The sandbox makes the box's code read-only to it (it can't edit even locally), and it has no path to Git — it never commits or pushes. Every code change is made by a human on the laptop; the agent's only role is to *suggest* an improvement in chat. (Branch protection on `main` would add a second lock but isn't currently enabled — the sandbox plus the human-only push path are what enforce it today.)
+- **Dirty-tree fail-safe:** `deploy.sh` refuses to run over a dirty working tree — it pings you instead of clobbering. So a stray box edit stalls deploys (visibly) rather than silently shipping. Reconcile with `git restore . && git clean -fd`.
+
+## 11 — End to end
+
+**A new contact (the user gives a name, company, and a LinkedIn URL):** gateway → model decides to enrich → calls tinyfish `search`/`fetch_content`/`run_web_automation` (gateway-side HTTP) to pull the profile → decides the fields → runs `contacts.py add` then `update` **in the sandbox** (uv, creds via `docker_forward_env`, writing to the `ppl-index` tab over the network) → replies with what it filled + sources. A repo write anywhere in that chain would be refused.
+
+**The 7am letter (no-agent cron):** systemd keeps the gateway up → at `0 14 * * *` UTC Hermes fires `daily-steve-jobs-letter` in no-agent mode → runs the Tier-2 copied wrapper → `exec`s the Tier-1 `fetch_letter.py --telegram` → it scrapes, picks an unserved letter (state in `profile/state/steve-jobs-letter/served.json`), prints the finished message → Hermes delivers stdout verbatim. **Zero GPT tokens.**
 
 ---
 
 ## Operational facts
 
-- **Service:** `hermes-gateway-butler` (systemd *user* service), `enabled` + linger on, so
-  it runs 24/7 across logout and reboot. Manage with `hermes -p butler gateway {status,restart}`.
-- **Access control:** Telegram is **default-deny** — only the allowlisted user ID
-  (`TELEGRAM_ALLOWED_USERS` in `.env`) can talk to Butler.
-- **Secrets:** only in `profile/.env`, mode `600`, never committed.
-- **No OS sandbox:** Butler has a **real shell with full access** to the server user's
-  files. That's deliberate and fine for a single-user home box — but it's the reason
-  `SOUL.md` tells it to act carefully, and the reason to think before giving a module
-  destructive powers.
-- **Schedule & DST:** cron runs on **server time (UTC)**. `0 14 * * *` = 7am Pacific during
-  PDT and drifts an hour at DST. For DST-proof timing, set the server TZ to
-  `America/Los_Angeles` and use `0 7 * * *`.
-
----
-
-## See also
-
-- `docs/specs/2026-05-31-butler-modular-agent-design.md` — *why* it's designed this way (the
-  decisions and trade-offs).
-- `docs/plans/2026-05-31-butler-foundation-and-letter-module.md` — the step-by-step build of
-  the foundation + first module.
-- This file (`ARCHITECTURE.md`) — *how it actually works now.*
-</content>
-</invoke>
+- **Service:** `hermes-gateway-butler` (systemd user service, linger on). Manage: `hermes -p butler gateway {status,restart}`.
+- **Access control:** Telegram default-deny — only `TELEGRAM_ALLOWED_USERS` may message it.
+- **Autonomy + sandbox:** `approvals.mode: auto` (no per-action approval), but the shell is the read-only-repo docker sandbox, so autonomy can't become a code change.
+- **Secrets:** `profile/.env`, mode 600, never committed; forwarded into the sandbox via `terminal.docker_forward_env`.
+- **Schedule & DST:** crons run on server time (UTC). `0 14` = 7am PT under PDT, drifts at DST; for DST-proof timing set the server TZ and use local cron times.
+- **Backups:** the server runs restic → Backblaze B2 over the profile (sessions, memory, runtime state, secrets — all on the box). The Sheet is the one store that lives off the box, so the `sheet-backup` no-agent cron exports each tab to `state/backups/*.csv`, bringing it into the same backup. restic provides the off-site, encrypted, point-in-time copy.
