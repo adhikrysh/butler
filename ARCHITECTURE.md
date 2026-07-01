@@ -9,7 +9,7 @@ Butler is a single always-on [Hermes](https://hermes-agent.nousresearch.com/) ag
 ```
    YOU (phone)                                   EXTERNAL SERVICES (public internet)
    ┌───────────────┐                             ┌───────────────────────────────────────────────────┐
-   │ Telegram app  │                             │ OpenAI API · gpt-5.4-mini  ◄── the MODEL (reasoning)│
+   │ Telegram app  │                             │ OpenAI API · gpt-5.5  ◄── the MODEL (reasoning)│
    └──────┬────────┘                             │ tinyfish MCP  ◄── search / fetch_content / web-auto │
           │ text / voice notes                   │ Google Sheets ◄── the "butler" spreadsheet (CRM)   │
           ▼                                       │ IMAP (Gmail/iCloud) ◄── outreach reply sync        │
@@ -25,7 +25,7 @@ Butler is a single always-on [Hermes](https://hermes-agent.nousresearch.com/) ag
    │ HERMES GATEWAY — "the brain"                              │                       │
    │ one always-on python process (systemd user service)      │                       │
    │   ┌──────────────────────────────────────────────────┐   │                       │
-   │   │ AGENT LOOP: msg+context ─►gpt-5.4-mini─►pick tool  │───┼──(a)(b)───────────────┘
+   │   │ AGENT LOOP: msg+context ─►gpt-5.5─►pick tool  │───┼──(a)(b)───────────────┘
    │   │ ─►run it─►feed result back─►…(≤max_turns)─►reply   │   │
    │   └──────────────────────────────────────────────────┘   │
    │ reads SKILLs from the repo · reads/writes MEMORY in profile
@@ -85,7 +85,7 @@ Butler is a single always-on [Hermes](https://hermes-agent.nousresearch.com/) ag
 
 - **Gateway = the always-on process.** `hermes-gateway-butler`, a **systemd *user* service** (linger enabled → survives logout/reboot, restarts on crash). It owns the Telegram connection, hands each message to the agent loop, ships the reply. While it's up, Butler is "online."
 - **Profile = one agent's entire world in one folder.** Config, secrets, persona, memory, schedule. Hermes can host many profiles (many agents) on one box; we run exactly one. **One profile = one Butler.** Modularity comes from teaching the *one* agent many skills, not from many agents.
-- **Model = BYOK GPT.** `gpt-5.4-mini`, reached with our own OpenAI key (`config.yaml: model.provider: custom`, `base_url: api.openai.com/v1`; key in `.env`, never leaves the box). Swapping the brain is a one-line change.
+- **Model = BYOK GPT.** `gpt-5.5`, reached with our own OpenAI key (`config.yaml: model.provider: custom`, `base_url: api.openai.com/v1`; key in `.env`, never leaves the box). Swapping the brain is a one-line change.
 - **SOUL.md** is the persona: a short markdown file loaded at the top of every conversation (calm, concise, "modular butler"). It's also the **one home for global agent policy** — e.g. *skills and code are read-only to you (enforced three ways); learnings go to memory / `state/learned`; the user promotes them via git*. That rule lives here, once, not copy-pasted into each skill (it used to be, and drifted).
 
 ## 3 — The agent loop + skills

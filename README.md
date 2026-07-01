@@ -1,6 +1,6 @@
 # Butler
 
-Self-hosted personal agent on Telegram: one [Hermes](https://hermes-agent.nousresearch.com/) profile (`butler`, GPT-5.4-mini, BYOK) running as a systemd service on a home server. Capabilities are modular skills under `modules/`.
+Self-hosted personal agent on Telegram: one [Hermes](https://hermes-agent.nousresearch.com/) profile (`butler`, GPT-5.5, BYOK) running as a systemd service on a home server. Capabilities are modular skills under `modules/`.
 
 ## Architecture
 

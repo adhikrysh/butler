@@ -13,7 +13,7 @@ mkdir -p "$PROFILE_HOME" "$PROFILE_HOME/state"
 # config.yaml — OpenAI key via an OpenAI-compatible "custom" provider.
 cat > "$PROFILE_HOME/config.yaml" <<YAML
 model:
-  default: "gpt-5.4-mini"
+  default: "gpt-5.5"
   provider: "custom"
   base_url: "https://api.openai.com/v1"
 

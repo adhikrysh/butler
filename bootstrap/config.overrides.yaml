@@ -8,7 +8,7 @@
 
 # Default model — a model bump ships via push, not a box edit.
 model:
-  default: gpt-5.4-mini
+  default: gpt-5.5
 
 # Write-protection: these host-side toolsets bypass the read-only-repo sandbox
 # (they run in-process as the user, not in the docker terminal), so keep them
