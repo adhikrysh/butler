@@ -26,6 +26,3 @@ uv run /home/drc/butler/modules/tools/cold-outbounds/scripts/outbound.py nudges
 - **Email sync.** `sync` (dry-run unless `--apply`) reads Sent+Inbox over IMAP and refreshes reply-status on `mail` rows; it also surfaces new outbound contacts it found (`new_candidates`) — report those to the user rather than writing them blindly.
 - **Quote-heavy messages → build the JSON in Python and `shell_quote` it** before calling `outbound.py`; don't hand-nest quotes in the shell.
 - **Columns are dynamic** — read the header row; write any column that exists; never invent columns or assume positions.
-
-## Remembering what you learn
-The repo here is **read-only to you** — your shell runs in a sandbox that mounts the code read-only, so you physically cannot edit this SKILL, a script, or a module (a write returns `Read-only file system`). That's intended. Short lessons → your built-in **memory** (auto-loads each session); longer notes → `/home/drc/.hermes/profiles/butler/state/learned/` (writable). To change code, suggest the improvement to the user — a human makes the change and ships it. Never print the service-account key.

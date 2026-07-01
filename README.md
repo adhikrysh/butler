@@ -8,7 +8,12 @@ Self-hosted personal agent on Telegram: one [Hermes](https://hermes-agent.nousre
 - A module is `SKILL.md` (trigger + instructions) plus optional `scripts/` and a `cron/deliver.sh`. Modules are a small subset of the agent's skills — Hermes also ships ~85 built-in skills (`hermes -p butler skills list`).
 - Cron jobs run in no-agent mode (script stdout delivered to Telegram verbatim — `cron.wrap_response: false`, so no Job-ID/metadata header or footer) or agent mode.
 - Mutable state lives in the **profile** (`memories/`, `state.db`, `state/`), never in the repo — the repo is pure, versioned code.
-- **Write-protection sandbox (the safety model).** The agent's shell runs inside a docker container (`terminal.backend: docker`) that mounts the repo **read-only** and the profile `state/` read-write. Butler reads and *executes* all code but **cannot modify a skill, script, or module** — a write returns `Read-only file system`. (The sandbox only governs the shell, so Hermes' host-side `file` toolset is disabled too — `agent.disabled_toolsets: [file]` — forcing every file write through it.) Code changes go only through git (laptop push → pull-deploy); the agent is sandboxed out of editing code and can only *suggest* improvements in chat. Continual learning still flows: short lessons → `memories/MEMORY.md` (auto-loaded, ~2.2k-char cap), longer notes → the profile's `state/learned/`.
+- **Write-protection (the safety model).** Butler reads and *executes* all code but **cannot modify a skill, script, or module** — code changes go only through git (laptop push → pull-deploy). Three layers enforce it, because Hermes exposes more than one write path (a single sandbox is *not* enough — `skill_manage` slipped past one):
+  1. **Sandboxed shell.** The agent's shell runs in a docker container (`terminal.backend: docker`) that mounts the repo **read-only** and the profile `state/` read-write — a shell write to the repo returns `Read-only file system`.
+  2. **Host-side write toolsets disabled.** `agent.disabled_toolsets: [file, code_execution]` — both run in-process (outside the sandbox) and could otherwise write the repo.
+  3. **Skills read-only via hook.** `skill_manage` (create/edit/patch/delete skills) can't be disabled per-tool and runs host-side, so it's hard-blocked by a `pre_tool_call` hook (`bootstrap/hooks/block_skill_manage.py`, matcher = exact tool name); the read tools `skill_view`/`skills_list` still work.
+
+  Continual learning still flows — the agent proposes, the user disposes: short lessons → `memories/MEMORY.md` (auto-loaded, ~2.2k-char cap), longer notes → the profile's `state/learned/`; the user reviews those and promotes the good ones into skills via git.
 - Internals + deploy tiers: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Layout
@@ -51,7 +56,7 @@ bootstrap/install_deploy.sh                # enable the self-deploy timer
 
 - **Service:** `hermes-gateway-butler` (systemd user service, linger enabled). Manage with `hermes -p butler gateway {status,restart}`.
 - **Access:** Telegram default-deny — only `TELEGRAM_ALLOWED_USERS` may message it.
-- **Autonomy + sandbox:** `approvals.mode: auto` — Butler runs tools without per-action approval, but its shell is sandboxed (repo mounted read-only — see Architecture), so full autonomy still can't become a code change. Telegram is default-deny on top.
+- **Autonomy + sandbox:** `approvals.mode: auto` — Butler runs tools without per-action approval, but the three write-protection layers hold (repo mounted read-only, `file`/`code_execution` disabled, `skill_manage` hook-blocked — see Architecture), so full autonomy still can't become a code change. Telegram is default-deny on top.
 - **Secrets:** profile `.env`, mode `600`, never committed; forwarded into the sandbox via `terminal.docker_forward_env`. The agent's shell runs in a read-only-repo docker sandbox, not a raw host shell.
 - **Tests:** `bootstrap/run_tests.sh` — offline, fixture-based; the deploy gate runs it.
 - **Backups:** the server runs restic → Backblaze B2 over the profile (sessions, memory, runtime state, secrets). The `sheet-backup` cron adds the Google Sheet tabs as CSV, so the only app data living off the box is captured too.

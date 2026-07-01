@@ -41,6 +41,3 @@ uv run /home/drc/butler/modules/tools/superforecasting/scripts/forecast.py dump
 - **Reviewing → `review` with outcome + verdict.** When he reports how a call went (or answers a due review), capture the `outcome`, set `verdict` on whether the *reasoning* was sound (right / wrong / mixed), and `status` to `reviewed`.
 - **Calibration on request → run `calibration` and report the gap** between his stated confidence and his actual hit rate (over- or under-confident), plainly.
 - **Quote-heavy text → build the JSON payload in Python and `shell_quote` it** before calling `forecast.py`; don't hand-nest quotes in the shell.
-
-## Remembering what you learn
-The repo here is **read-only to you** — your shell runs in a sandbox that mounts the code read-only, so you physically cannot edit this SKILL, a script, or a module (a write returns `Read-only file system`). That's intended. Short lessons → your built-in **memory** (auto-loads each session); longer notes → `/home/drc/.hermes/profiles/butler/state/learned/` (writable). To change code, suggest the improvement to the user — a human makes the change and ships it. Never print the service-account key.

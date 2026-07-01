@@ -10,12 +10,33 @@
 model:
   default: gpt-5.4-mini
 
-# Write-protection: the host-side `file` toolset bypasses the read-only-repo
-# sandbox, so keep it disabled (belt-and-suspenders if Hermes regenerates the
-# enabled-toolset list on upgrade).
+# Write-protection: these host-side toolsets bypass the read-only-repo sandbox
+# (they run in-process as the user, not in the docker terminal), so keep them
+# disabled. `file` = read/write/patch files; `code_execution` = run arbitrary
+# Python — both can write the repo working tree and jam the pull-based deploy.
+# Butler routes all real work through `terminal` (docker, repo mounted ro) + MCP,
+# so neither is needed. Belt-and-suspenders if Hermes regenerates the toolset
+# list on upgrade. The remaining skill-write path (`skill_manage`) can't be
+# disabled per-tool, so it's blocked by the pre_tool_call hook below instead.
 agent:
   disabled_toolsets:
     - file
+    - code_execution
+
+# Skills are READ-ONLY to the agent. `skill_manage` (create/edit/patch/delete)
+# is bundled with the read tools `skill_view`/`skills_list` in the one `skills`
+# toolset, and Hermes has no per-tool disable — so we hard-block just the writer
+# with a pre_tool_call hook (matcher = exact tool name, via fullmatch). The agent
+# keeps reading its skills; it cannot rewrite them. Learnings go to memory /
+# state/learned instead; the user promotes them into skills via git.
+# `hooks_auto_accept` is required or the headless gateway silently skips
+# registering the hook (non-TTY consent gate). See bootstrap/hooks/.
+hooks_auto_accept: true
+hooks:
+  pre_tool_call:
+    - matcher: skill_manage
+      command: /home/drc/butler/bootstrap/hooks/block_skill_manage.py
+      timeout: 10
 
 # Deliver cron / no-agent output to Telegram raw — no "Job ID" + metadata
 # header/footer wrapper (Hermes wraps by default).
