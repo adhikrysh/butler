@@ -142,7 +142,7 @@ Six modules + a shared lib. Each is `SKILL.md` (+ optional `scripts/`, `cron/del
 
 - **Built-in memory:** `memories/MEMORY.md` (+ `USER.md`), always-on, **auto-loaded into context every session** but **capped (~2,200 chars)** with auto-prune — a small, self-maintaining scratchpad for short lessons. (Its smallness is *why* the agent once wrote reference docs into the repo: they didn't fit memory.)
 - **Sessions:** `state.db` (SQLite, full-text-searchable past conversations + registered cron rows).
-- **Learned notes (longer):** `profile/state/learned/` — agent-writable (it's on the rw mount), off the read-only repo.
+- **Learned notes → the learnings loop:** `profile/state/learned/learnings.jsonl` — agent-writable (on the rw mount, off the read-only repo). The agent logs skill-improvement proposals here via `learn.py` (it can't edit skills — `skill_manage` is hook-blocked); a weekly no-agent digest surfaces pending med+high; the user promotes the good ones into a skill via git. Capture is frictionless; promotion is deliberate. See `tools/learnings` and the `2026-07-01-learnings-loop` spec.
 - **Module runtime state** lives in the profile too (`state/garmin-dashboard/history.jsonl`, `state/steve-jobs-letter/served.json`), pointed at by `BUTLER_*_STATE` env vars so the repo stays pure read-only code.
 
 Memory is **shared across skills** — one store, many readers (a context-provider module writes; others read).
