@@ -28,4 +28,8 @@ echo "── superforecasting"
 ( cd "$REPO_DIR/modules/tools/superforecasting" \
   && PYTHONPATH=scripts uv run --with pytest pytest tests/ -q ) || rc=1
 
+echo "── learnings"
+( cd "$REPO_DIR/modules/tools/learnings" \
+  && PYTHONPATH=scripts uv run --with pytest pytest tests/ -q ) || rc=1
+
 exit $rc

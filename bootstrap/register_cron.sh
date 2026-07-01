@@ -74,4 +74,16 @@ hermes -p butler cron remove daily-sheet-backup >/dev/null 2>&1 || true
 hermes -p butler cron create "0 8 * * *" --no-agent --script sheet_backup.sh \
   --deliver "telegram:${TG_USER_ID}" --name daily-sheet-backup
 
+# --- learnings: weekly review digest -----------------------------------------
+# NO-AGENT: learn.py digest prints pending (med+high) learnings the agent
+# captured; stdout delivered VERBATIM (empty → no message on a quiet week).
+# 0 4 * * 1 UTC = Sunday 9pm US Pacific (PDT). (Shares the 04:00 slot with the
+# daily jobs on Sundays — harmless; bump to 0 5 * * 1 if the pile-up annoys.)
+cp "$REPO_DIR/modules/tools/learnings/cron/deliver.sh" \
+   "$PROFILE_SCRIPTS/learnings_digest.sh"
+chmod +x "$PROFILE_SCRIPTS/learnings_digest.sh"
+hermes -p butler cron remove weekly-learnings-digest >/dev/null 2>&1 || true
+hermes -p butler cron create "0 4 * * 1" --no-agent --script learnings_digest.sh \
+  --deliver "telegram:${TG_USER_ID}" --name weekly-learnings-digest
+
 hermes -p butler cron list
