@@ -27,8 +27,9 @@ agent:
 # is bundled with the read tools `skill_view`/`skills_list` in the one `skills`
 # toolset, and Hermes has no per-tool disable — so we hard-block just the writer
 # with a pre_tool_call hook (matcher = exact tool name, via fullmatch). The agent
-# keeps reading its skills; it cannot rewrite them. Learnings go to memory /
-# state/learned instead; the user promotes them into skills via git.
+# keeps reading its skills; it cannot rewrite them. Instead it logs skill-
+# improvement ideas via the `learnings` skill (`learn.py`); a weekly digest
+# surfaces them, and the user promotes the good ones into skills via git.
 # `hooks_auto_accept` is required or the headless gateway silently skips
 # registering the hook (non-TTY consent gate). See bootstrap/hooks/.
 hooks_auto_accept: true

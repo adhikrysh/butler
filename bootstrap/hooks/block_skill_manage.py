@@ -25,10 +25,11 @@ import sys
 
 BLOCK_MESSAGE = (
     "skill_manage is disabled — skills are READ-ONLY to you. Do not create, edit, "
-    "patch, or delete skills; you cannot change your own instructions. If you learned "
-    "something worth keeping, write it to your memory (persists across sessions) or a "
-    "note under state/learned/. The user reviews those and promotes the good ones into "
-    "the skill via git. Capture the learning there and continue the task."
+    "patch, or delete skills. If you learned something that would improve a skill, "
+    "log it with the learnings skill: run learn.py add with the skill name, a "
+    "one-line insight, and an importance tag. The weekly digest surfaces it and the "
+    "user promotes the good ones into the skill via git. Log it there, then continue "
+    "the task."
 )
 
 

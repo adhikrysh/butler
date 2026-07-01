@@ -93,7 +93,14 @@ def main():
     records = read_records(path)
 
     if args.cmd == "add":
-        rec = json.loads(args.payload)
+        try:
+            rec = json.loads(args.payload)
+        except json.JSONDecodeError:
+            print("--json must be valid JSON", file=sys.stderr)
+            return 1
+        if not isinstance(rec, dict):
+            print("--json must be a JSON object", file=sys.stderr)
+            return 1
         insight = str(rec.get("insight", "")).strip()
         if not insight:
             print("insight is required", file=sys.stderr)

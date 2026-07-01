@@ -43,3 +43,12 @@ def test_add_requires_insight(tmp_path):
     r = subprocess.run([sys.executable, str(SCRIPT), "add", "--json", json.dumps({"skill": "x"})],
                        capture_output=True, text=True, env=env)
     assert r.returncode == 1 and "insight" in r.stderr
+
+
+def test_add_rejects_malformed_json(tmp_path):
+    env = {**os.environ, "BUTLER_LEARNED_STATE": str(tmp_path / "learnings.jsonl")}
+    r = subprocess.run([sys.executable, str(SCRIPT), "add", "--json", "not-json"],
+                       capture_output=True, text=True, env=env)
+    assert r.returncode != 0
+    assert "Traceback" not in r.stderr
+    assert "must be valid JSON" in r.stderr
