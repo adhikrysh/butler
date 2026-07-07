@@ -74,3 +74,9 @@ def test_sheet_failure_never_breaks_db_write(tmp_path):
     s.ensure_tab("Jim", ["a"])
     s.append("Jim", {"a": "1"})           # sheet raises internally; must not propagate
     assert s.records("Jim") == [{"a": "1"}]   # DB write still succeeded
+
+
+def test_append_auto_creates_table(tmp_path):
+    s = Store(db_path=str(tmp_path / "t.db"), sheet=None)
+    s.append("brand-new", {"x": "1"})       # no ensure_tab first
+    assert s.records("brand-new") == [{"x": "1"}]

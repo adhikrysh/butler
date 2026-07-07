@@ -65,12 +65,15 @@ class Store:
                   file=sys.stderr)
 
     # --- schema ---
-    def ensure_tab(self, tab: str, headers: list[str]) -> str:
-        t = table_name(tab)
+    def _create_table(self, t: str):
         self._conn.execute(
             f'CREATE TABLE IF NOT EXISTS "{t}" '
             "(id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL, "
             "created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
+
+    def ensure_tab(self, tab: str, headers: list[str]) -> str:
+        t = table_name(tab)
+        self._create_table(t)
         self._conn.commit()
         self._project("ensure_tab", tab, headers)
         return tab
@@ -95,6 +98,7 @@ class Store:
     # --- writes (DB first, then Sheet best-effort) ---
     def _insert(self, tab: str, record: dict):
         t = table_name(tab)
+        self._create_table(t)
         now = _now()
         self._conn.execute(
             f'INSERT INTO "{t}" (data, created_at, updated_at) VALUES (?,?,?)',
