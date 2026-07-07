@@ -16,7 +16,7 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
-from sheets import Sheet  # noqa: E402
+from store import Store  # noqa: E402
 from outboundcore import select_nudges, is_bulk, build_threads, derive_status, initiated  # noqa: E402
 
 TAB = "cold-outbounds"
@@ -46,7 +46,7 @@ def main() -> int:
     sy.add_argument("--limit", type=int, default=300, help="max messages per folder")
 
     args = p.parse_args()
-    s = Sheet()
+    s = Store()
 
     if args.cmd == "dump":
         print(json.dumps(s.records(TAB), indent=2, ensure_ascii=False))
