@@ -56,6 +56,8 @@ terminal:
     - GARMIN_PASSWORD
     - BUTLER_GARMIN_STATE
     - BUTLER_LETTER_STATE
+    - JIM_SYNC_CMD
+    - BUTLER_JIM_STATE
 
 skills:
   external_dirs:
