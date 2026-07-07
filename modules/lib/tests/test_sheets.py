@@ -18,3 +18,13 @@ def test_match_index_finds_first_all_keys_match():
 
 def test_match_index_returns_none_when_absent():
     assert match_index([{"email": "a@example.com"}], {"email": "z@example.com"}) is None
+
+
+from sheets import a1_row_from_range
+
+
+def test_a1_row_from_range():
+    assert a1_row_from_range("Jim!A42:J42") == 42
+    assert a1_row_from_range("A7:J7") == 7
+    assert a1_row_from_range("") is None
+    assert a1_row_from_range("Jim!A1:J1") == 1
