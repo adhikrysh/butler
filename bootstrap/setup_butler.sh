@@ -58,6 +58,7 @@ terminal:
     - BUTLER_LETTER_STATE
     - JIM_SYNC_CMD
     - BUTLER_JIM_STATE
+    - BUTLER_DB_PATH
 
 skills:
   external_dirs:
