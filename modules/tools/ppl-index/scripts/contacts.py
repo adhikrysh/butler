@@ -15,7 +15,7 @@ import argparse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
-from sheets import Sheet  # noqa: E402
+from store import Store  # noqa: E402
 
 TAB = "ppl-index"
 
@@ -37,7 +37,7 @@ def main() -> int:
     u.add_argument("--json", required=True, dest="payload")
 
     args = p.parse_args()
-    s = Sheet()
+    s = Store()
 
     if args.cmd == "dump":
         print(json.dumps(s.records(TAB), indent=2, ensure_ascii=False))
