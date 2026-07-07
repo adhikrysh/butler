@@ -36,4 +36,8 @@ echo "── learnings"
 ( cd "$REPO_DIR/modules/tools/learnings" \
   && PYTHONPATH=scripts uv run --with pytest pytest tests/ -q ) || rc=1
 
+echo "── jim"
+( cd "$REPO_DIR/modules/tools/jim" \
+  && PYTHONPATH=scripts uv run --with pytest pytest tests/ -q ) || rc=1
+
 exit $rc

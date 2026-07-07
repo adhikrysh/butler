@@ -21,7 +21,7 @@ Self-hosted personal agent on Telegram: one [Hermes](https://hermes-agent.nousre
 | Path | Contents |
 |------|----------|
 | `modules/` | Skills — source of truth, auto-discovered via `external_dirs` |
-| `modules/lib/` | Shared library (gspread Sheets wrapper) imported by the sheet-backed modules |
+| `modules/lib/` | Shared library — `sheets.py` (gspread Sheets wrapper) imported by the sheet-backed modules; `garmin.py` (shared Garmin client) imported by `garmin-dashboard` and `jim` |
 | `bootstrap/` | Profile setup, cron registration, self-deploy |
 | `ARCHITECTURE.md` | System internals + deployment model |
 
@@ -37,6 +37,7 @@ Self-hosted personal agent on Telegram: one [Hermes](https://hermes-agent.nousre
 | `tools/superforecasting` | interactive + proactive (no-agent) | `0 3 * * *` daily · `30 3 * * 1` weekly | Decision journal / calibration (`superforecasting` tab): log decisions with a probability + expected outcome, daily check-in, review resurfacing, weekly calibration report (stated confidence vs actual hit-rate) |
 | `tools/learnings` | interactive + proactive (no-agent) | `0 4 * * 1` | Continual-learning loop: the agent logs skill-improvement ideas it discovers to `state/learned/learnings.jsonl` (it can't edit skills — `skill_manage` is hook-blocked), flags high ones inline, and a weekly digest surfaces pending med+high for you to promote into skills via git |
 | `tools/sheet-backup` | proactive, no-agent | `0 8 * * *` | Daily CSV snapshot of every Sheet tab into the profile, captured by the server's restic→B2 backup |
+| `tools/jim` | interactive | — | Personal coach (`Jim` tab): prescribe from Garmin readiness, log sessions (strength conversationally; cardio auto-enriched from the FR955), debrief workouts, hold goals + the active plan as yellow meta-rows, compute PRs. Reactive now; proactive check-ins planned |
 
 Crons run on server time (UTC): `0 14` = 7am PT, `0 4` = 9pm PT, `0 3` = 8pm PT, `0 8` = 1am PT (under PDT), +1h drift at DST.
 

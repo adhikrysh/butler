@@ -128,9 +128,12 @@ Six modules + a shared lib. Each is `SKILL.md` (+ optional `scripts/`, `cron/del
 | `daily/garmin-dashboard` | cron + interactive | Garmin API → daily stats + trend log (state in profile) |
 | `daily/steve-jobs-letter` | cron (no-agent) | Steve Jobs Archive scrape; never-repeating letter |
 | `tools/sheet-backup` | cron (no-agent) | daily CSV snapshot of the Sheet tabs → profile, for the restic→B2 backup; no `SKILL.md` (not agent-invocable) |
+| `tools/jim` | interactive | `Jim` tab — training log + goals/plan (yellow meta-rows); Garmin per-activity debrief via `lib/garmin` |
 | `modules/lib/sheets.py` | — | shared gspread wrapper (header-row-is-schema + retry); imported by the three Sheet modules via a `sys.path` shim |
+| `modules/lib/garmin.py` | — | shared Garmin client (auth + fetch + pure helpers); imported by `garmin-dashboard` and `jim` |
 
 - **Split by capability, not table.** `ppl-index` (contact store) and `cold-outbounds` (outreach engine: nudges + IMAP sync + reply-status logic) were one `crm` module; splitting them put the heavy email machinery in its own box. Cross-tab "who is X" is composed by the *agent* calling both modules — they stay independent (no shared-find coupling).
+- **Shared Garmin client.** `daily/garmin-dashboard` (daily stats pull) and `tools/jim` (per-activity coaching debrief) both go through `lib/garmin.py` — one OAuth/session + fetch layer, two consumers, so token refresh and API shape live in one place instead of being duplicated.
 - **Script ↔ skill contract.** Scripts print a stable JSON shape to stdout; the skill reasons over it. Scripts run via `uv run …`, reading off disk each invocation — pure, fixture-tested, no LLM. A script with a `--telegram` mode prints the *final* message for the no-agent cron path; default mode prints JSON for the interactive path. One helper, two consumers.
 - **Failure is silent-by-design** for no-agent paths: non-zero exit + empty stdout → Hermes sends nothing (better than messaging garbage).
 
