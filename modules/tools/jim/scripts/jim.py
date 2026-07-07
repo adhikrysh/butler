@@ -106,9 +106,9 @@ def main() -> int:
 
     args = p.parse_args()
     s = Store()
-    s.ensure_tab(TAB, HEADERS)
 
     if args.cmd == "log":
+        s.ensure_tab(TAB, HEADERS)
         rec = json.loads(args.payload)
         rec.setdefault("datetime", _now())
         rec.setdefault("type", "other")
@@ -118,6 +118,7 @@ def main() -> int:
         print(json.dumps(rec, ensure_ascii=False))
 
     elif args.cmd == "note":
+        s.ensure_tab(TAB, HEADERS)
         rec = {"datetime": _now(), "type": args.type,
                "title": args.title, "remarks": args.text}
         s.append_colored(TAB, rec, background=META_YELLOW)
