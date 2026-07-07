@@ -15,12 +15,12 @@ import os
 import sys
 import json
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
-from sheets import Sheet  # noqa: E402
+from store import Store  # noqa: E402
 import garmin as gm       # noqa: E402
 from jimcore import compute_prs, latest_by_type, latest_goals, recent_sessions  # noqa: E402
 
@@ -29,25 +29,12 @@ HEADERS = ["datetime", "type", "title", "duration_min", "distance_km",
            "avg_hr", "calories", "rpe", "garmin_activity_id", "remarks"]
 META_YELLOW = {"red": 1.0, "green": 0.949, "blue": 0.8}   # ~#FFF2CC
 PACIFIC = ZoneInfo("America/Los_Angeles")
-STATE_DIR = Path(os.environ.get(
-    "BUTLER_JIM_STATE", str(Path.home() / ".hermes/profiles/butler/state/jim")))
 # map a jim cardio type -> Garmin activityType keywords, for safe auto-matching
 _TYPE_KEYWORDS = {"run": ("run",), "ride": ("cycl", "bik", "ride"), "swim": ("swim",)}
 
 
 def _now():
     return datetime.now(PACIFIC).strftime("%Y-%m-%dT%H:%M")
-
-
-def _mirror(record: dict):
-    """Append the record to the jsonl mirror (best-effort; never fatal)."""
-    try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        with (STATE_DIR / "log.jsonl").open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"captured_at": datetime.now(timezone.utc)
-                                 .strftime("%Y-%m-%dT%H:%M:%SZ"), **record}) + "\n")
-    except Exception as exc:   # never let the mirror (fs or serialization) fail a write
-        print(f"jsonl mirror failed: {exc}", file=sys.stderr)
 
 
 def _garmin_readiness():
@@ -115,9 +102,10 @@ def main() -> int:
     sub.add_parser("current", help="coach context blob (plan+goals+recent+PRs+readiness)")
     sub.add_parser("prs", help="computed PRs")
     sub.add_parser("dump", help="whole tab as JSON")
+    sub.add_parser("resync", help="rebuild the Sheet view from the local DB (drift repair)")
 
     args = p.parse_args()
-    s = Sheet()
+    s = Store()
     s.ensure_tab(TAB, HEADERS)
 
     if args.cmd == "log":
@@ -127,14 +115,12 @@ def main() -> int:
         if not args.no_garmin and str(rec.get("type", "")).lower() in ("run", "ride", "swim"):
             rec = _enrich_from_garmin(rec)
         s.append(TAB, rec)
-        _mirror(rec)
         print(json.dumps(rec, ensure_ascii=False))
 
     elif args.cmd == "note":
         rec = {"datetime": _now(), "type": args.type,
                "title": args.title, "remarks": args.text}
         s.append_colored(TAB, rec, background=META_YELLOW)
-        _mirror(rec)
         print(json.dumps(rec, ensure_ascii=False))
 
     elif args.cmd == "current":
@@ -152,6 +138,19 @@ def main() -> int:
 
     elif args.cmd == "dump":
         print(json.dumps(s.records(TAB), indent=2, ensure_ascii=False))
+
+    elif args.cmd == "resync":
+        from sheets import Sheet
+        rows = s.records(TAB)                      # local DB = source of truth
+        sheet = Sheet(); sheet.ensure_tab(TAB, HEADERS)
+        ws = sheet._ws(TAB)
+        ws.clear(); ws.update([HEADERS] + [[str(r.get(h, "")) for h in HEADERS] for r in rows])
+        # re-apply yellow to meta rows
+        from sheets import _col_letter
+        for i, r in enumerate(rows, start=2):
+            if str(r.get("type", "")).lower() in ("goal", "plan", "note"):
+                ws.format(f"A{i}:{_col_letter(len(HEADERS))}{i}", {"backgroundColor": META_YELLOW})
+        print(json.dumps({"resynced": len(rows)}))
 
     return 0
 
