@@ -16,6 +16,10 @@ echo "── read-aloud"
 ( cd "$REPO_DIR/modules/tools/read-aloud" \
   && uv run --with requests --with pytest pytest tests/ -q ) || rc=1
 
+echo "── garmin-dashboard (pure curation)"
+( cd "$REPO_DIR/modules/daily/garmin-dashboard" \
+  && PYTHONPATH=scripts uv run --with pytest pytest tests/ -q ) || rc=1
+
 echo "── lib (shared sheets helpers)"
 ( cd "$REPO_DIR/modules/lib" \
   && PYTHONPATH=. uv run --with pytest pytest tests/ -q ) || rc=1
