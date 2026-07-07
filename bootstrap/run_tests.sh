@@ -40,4 +40,8 @@ echo "── jim"
 ( cd "$REPO_DIR/modules/tools/jim" \
   && PYTHONPATH=scripts uv run --with pytest pytest tests/ -q ) || rc=1
 
+echo "── bootstrap (migrate)"
+( cd "$REPO_DIR/bootstrap" \
+  && PYTHONPATH=.:"$REPO_DIR/modules/lib" uv run --with pytest pytest tests/ -q ) || rc=1
+
 exit $rc
