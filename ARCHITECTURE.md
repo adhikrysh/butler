@@ -127,9 +127,9 @@ Six modules + a shared lib. Each is `SKILL.md` (+ optional `scripts/`, `cron/del
 | `tools/read-aloud` | interactive | Cartesia TTS → Telegram voice notes |
 | `daily/garmin-dashboard` | cron + interactive | Garmin API → daily stats + trend log (state in profile) |
 | `daily/steve-jobs-letter` | cron (no-agent) | Steve Jobs Archive scrape; never-repeating letter |
-| `tools/sheet-backup` | cron (no-agent) | daily CSV snapshot of the Sheet tabs → profile, for the restic→B2 backup; no `SKILL.md` (not agent-invocable) |
 | `tools/jim` | interactive | `Jim` tab — training log + goals/plan (yellow meta-rows); Garmin per-activity debrief via `lib/garmin` |
-| `modules/lib/sheets.py` | — | shared gspread wrapper (header-row-is-schema + retry); imported by the three Sheet modules via a `sys.path` shim |
+| `modules/lib/store.py` | — | **SQLite source of truth** (`state/butler.db`) with a Sheet-compatible interface; reads local, writes DB-first then project to the Sheet. Used by the four Sheet-backed modules |
+| `modules/lib/sheets.py` | — | shared gspread wrapper (header-row-is-schema + retry); now the **write-through view** layer under `store.py` (+ `sheet-backup` was retired) |
 | `modules/lib/garmin.py` | — | shared Garmin client (auth + fetch + pure helpers); imported by `garmin-dashboard` and `jim` |
 
 - **Split by capability, not table.** `ppl-index` (contact store) and `cold-outbounds` (outreach engine: nudges + IMAP sync + reply-status logic) were one `crm` module; splitting them put the heavy email machinery in its own box. Cross-tab "who is X" is composed by the *agent* calling both modules — they stay independent (no shared-find coupling).
@@ -187,4 +187,4 @@ The agent reads modules **straight out of the repo checkout** (the `external_dir
 - **Autonomy + sandbox:** `approvals.mode: auto` (no per-action approval), but the shell is the read-only-repo docker sandbox, so autonomy can't become a code change.
 - **Secrets:** `profile/.env`, mode 600, never committed; forwarded into the sandbox via `terminal.docker_forward_env`.
 - **Schedule & DST:** crons run on server time (UTC). `0 14` = 7am PT under PDT, drifts at DST; for DST-proof timing set the server TZ and use local cron times.
-- **Backups:** the server runs restic → Backblaze B2 over the profile (sessions, memory, runtime state, secrets — all on the box). The Sheet is the one store that lives off the box, so the `sheet-backup` no-agent cron exports each tab to `state/backups/*.csv`, bringing it into the same backup. restic provides the off-site, encrypted, point-in-time copy.
+- **Backups:** the box's `backup_configs.sh` (user cron, 01:30 UTC) stages the Butler profile + a consistent `state.db`/`butler.db` snapshot into `/srv/sambashare/data/butler-backup/`; the server's Backrest→restic→Backblaze B2 job (02:00 UTC) captures that path off-site, encrypted, point-in-time. SQLite (`butler.db`) is now the store of record for the Sheet-backed modules; the Sheet is a write-through view (`sheet-backup` retired). See the server runbook.

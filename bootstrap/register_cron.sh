@@ -63,16 +63,9 @@ hermes -p butler cron remove weekly-superforecasting-calibration >/dev/null 2>&1
 hermes -p butler cron create "30 3 * * 1" --no-agent --script superforecasting_calibration.sh \
   --deliver "telegram:${TG_USER_ID}" --name weekly-superforecasting-calibration
 
-# --- sheet-backup: daily CSV snapshot of the spreadsheet ---------------------
-# NO-AGENT: snapshot.py writes state/backups/<tab>.csv so the server's restic→B2
-# backup captures the Sheet (the only app data living off the box). Silent on
-# success; failures print to stdout → Telegram. 0 8 * * * UTC = ~1am US Pacific.
-cp "$REPO_DIR/modules/tools/sheet-backup/cron/deliver.sh" \
-   "$PROFILE_SCRIPTS/sheet_backup.sh"
-chmod +x "$PROFILE_SCRIPTS/sheet_backup.sh"
-hermes -p butler cron remove daily-sheet-backup >/dev/null 2>&1 || true
-hermes -p butler cron create "0 8 * * *" --no-agent --script sheet_backup.sh \
-  --deliver "telegram:${TG_USER_ID}" --name daily-sheet-backup
+# (sheet-backup retired 2026-07-07: SQLite lib/store.py is now the source of truth
+# for the Sheet-backed modules; the Sheet is a write-through view, and the DB is
+# backed up consistently via the box's backup_configs.sh → restic→B2.)
 
 # --- learnings: weekly review digest -----------------------------------------
 # NO-AGENT: learn.py digest prints pending (med+high) learnings the agent
