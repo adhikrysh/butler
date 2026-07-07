@@ -18,7 +18,7 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
-from sheets import Sheet  # noqa: E402
+from store import Store  # noqa: E402
 from sfcore import parse_window, compute_review_date, select_due, calibration  # noqa: E402
 
 TAB = "superforecasting"
@@ -43,7 +43,7 @@ def main() -> int:
     sub.add_parser("daily", help="daily check-in prompt + due reviews (digest)")
 
     args = p.parse_args()
-    s = Sheet()
+    s = Store()
     today = date.today()
 
     if args.cmd == "log":
