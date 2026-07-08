@@ -158,7 +158,7 @@ def enrich_session(g, session, sync_cmd=None):
     try:
         if sync_cmd:
             ensure_fresh_sync(g, trigger_cmd=sync_cmd)
-        day = session.get("date") or datetime.now(timezone.utc).astimezone().date().isoformat()
+        day = str(session.get("date") or "")[:10] or datetime.now(timezone.utc).astimezone().date().isoformat()
         acts = [summarize_activity(a) for a in activities(g, day, day)]
         want = session.get("garmin_activity_id")
         kw = _TYPE_KEYWORDS.get(session.get("type"), ())

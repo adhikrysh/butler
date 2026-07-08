@@ -67,6 +67,7 @@ def main() -> int:
     if args.cmd == "log":
         rec = json.loads(args.payload)
         exercises = rec.pop("exercises", [])
+        rec.setdefault("date", datetime.now(PACIFIC).isoformat(timespec="minutes"))
         rec = _enrich_session(rec)
         sid = s.log_session(rec, exercises)
         print(json.dumps({"logged_session": sid, "type": rec.get("type")}, ensure_ascii=False))

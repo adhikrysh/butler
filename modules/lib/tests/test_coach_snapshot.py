@@ -66,10 +66,14 @@ def test_enrich_session_fills_strength_from_garmin():
 
 
 def test_enrich_session_never_raises_on_client_failure():
+    # get_activities_by_date SUCCEEDS (so `_safe`'s inner except never fires)
+    # but returns a malformed activity (not a dict) so summarize_activity's
+    # a.get(...) call raises inside the list comprehension in enrich_session
+    # itself -- this exercises enrich_session's OWN outer try/except, not
+    # just `_safe`'s.
     class Boom:
-        def __getattr__(self, n):
-            def f(*a, **k): raise RuntimeError("garmin down")
-            return f
+        def get_activities_by_date(self, start, end):
+            return [42]
     session = {"type": "strength", "date": "2026-07-08"}
     result = garmin.enrich_session(Boom(), session)
     assert result == {"type": "strength", "date": "2026-07-08"}
