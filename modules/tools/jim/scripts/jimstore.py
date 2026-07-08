@@ -19,6 +19,7 @@ SESSIONS_TAB, PROGRAMME_TAB, GOALS_TAB = "Jim Sessions", "Jim Programme", "Jim G
 SESSION_COLS = ["date", "type", "title", "summary", "duration_min", "rpe", "feel"]
 PROGRAMME_COLS = ["date", "name", "plan", "active"]
 GOAL_COLS = ["date_set", "metric", "target", "current", "unit", "deadline", "status"]
+_GOAL_WRITABLE = {"date_set", "metric", "target", "current", "unit", "deadline", "status", "notes"}
 
 
 def _now():
@@ -34,6 +35,7 @@ class JimStore:
         self._c.row_factory = sqlite3.Row
         self._c.execute("PRAGMA journal_mode=WAL")
         self._c.execute("PRAGMA busy_timeout=5000")
+        self._c.execute("PRAGMA foreign_keys=ON")
         self._schema()
         self._sheet_mode = sheet
         self._sheet_obj = sheet if sheet not in ("auto", None) else None
@@ -89,25 +91,28 @@ class JimStore:
             print(f"jimstore: render {tab} failed (DB authoritative): {exc}", file=sys.stderr)
 
     def render_sheets(self):
-        # Sessions
-        srows = []
-        sets_by = {}
-        for r in self.set_records():
-            sets_by.setdefault(r["session_id"], []).append(r)
-        for s in self.sessions():
-            exs = _group_exercises(sets_by.get(s["id"], []))
-            summary = jimcore.render_summary(s, exs)
-            srows.append([str(s.get("date", "")), str(s.get("type", "")),
-                          str(s.get("title", "")), summary, _s(s.get("duration_min")),
-                          _s(s.get("rpe")), str(s.get("feel", ""))])
-        self._render_tab(SESSIONS_TAB, SESSION_COLS, srows)
-        # Programme
-        prows = [[str(p["date"]), str(p.get("name", "")), str(p["plan_text"]), _s(p["active"])]
-                 for p in self.programmes()]
-        self._render_tab(PROGRAMME_TAB, PROGRAMME_COLS, prows)
-        # Goals
-        grows = [[str(g.get(c, "")) for c in GOAL_COLS] for g in self.goals()]
-        self._render_tab(GOALS_TAB, GOAL_COLS, grows)
+        try:
+            # Sessions
+            srows = []
+            sets_by = {}
+            for r in self.set_records():
+                sets_by.setdefault(r["session_id"], []).append(r)
+            for s in self.sessions():
+                exs = _group_exercises(sets_by.get(s["id"], []))
+                summary = jimcore.render_summary(s, exs)
+                srows.append([str(s.get("date", "")), str(s.get("type", "")),
+                              str(s.get("title", "")), summary, _s(s.get("duration_min")),
+                              _s(s.get("rpe")), str(s.get("feel", ""))])
+            self._render_tab(SESSIONS_TAB, SESSION_COLS, srows)
+            # Programme
+            prows = [[str(p["date"]), str(p.get("name", "")), str(p["plan_text"]), _s(p["active"])]
+                     for p in self.programmes()]
+            self._render_tab(PROGRAMME_TAB, PROGRAMME_COLS, prows)
+            # Goals
+            grows = [[str(g.get(c, "")) for c in GOAL_COLS] for g in self.goals()]
+            self._render_tab(GOALS_TAB, GOAL_COLS, grows)
+        except Exception as exc:
+            print(f"jimstore: render_sheets failed (DB authoritative): {exc}", file=sys.stderr)
 
     # ---- writes ----
     def log_session(self, session: dict, exercises: list[dict]) -> int:
@@ -158,6 +163,9 @@ class JimStore:
         return cur.lastrowid
 
     def update_goal(self, match: dict, changes: dict) -> dict | None:
+        changes = {k: v for k, v in changes.items() if k in _GOAL_WRITABLE}
+        if not changes:
+            return None
         rows = self.goals()
         for g in rows:
             if all(str(g.get(k, "")) == str(v) for k, v in match.items()):

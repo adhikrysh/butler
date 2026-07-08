@@ -40,3 +40,19 @@ def test_goals_add_and_update(tmp_path):
 def test_reads_empty_before_any_write(tmp_path):
     s = _store(tmp_path)
     assert s.sessions() == [] and s.set_records() == [] and s.programmes() == [] and s.goals() == []
+
+
+class _BoomSheet:
+    def ensure_tab(self, *a, **k): raise RuntimeError("sheet down")
+    def append(self, *a, **k): raise RuntimeError("sheet down")
+    def append_colored(self, *a, **k): raise RuntimeError("sheet down")
+    def update(self, *a, **k): raise RuntimeError("sheet down")
+    def _ws(self, *a, **k): raise RuntimeError("sheet down")
+
+
+def test_sheet_failure_never_breaks_db_write(tmp_path):
+    s = JimStore(db_path=str(tmp_path / "j.db"), sheet=_BoomSheet())
+    sid = s.log_session({"type": "strength", "title": "X"},
+                        [{"exercise": "squat", "sets": [{"weight": 100, "reps": 5}]}])
+    assert isinstance(sid, int)
+    assert len(s.sessions()) == 1 and len(s.set_records()) == 1   # DB write survived the Sheet blow-up
