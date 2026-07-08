@@ -6,6 +6,34 @@ SESSION_TYPES = {"strength", "run", "ride", "swim", "mobility", "sport", "other"
 CARDIO_TYPES = {"run", "ride", "swim"}
 _DIST_BUCKETS = [(1, "1k"), (5, "5k"), (10, "10k"), (21.0975, "half"), (42.195, "full")]
 
+# Seed exercise -> muscle-group map (lowercased exercise name). Unknown exercises -> "other".
+MUSCLE_MAP = {
+    "leg extension": "quads",
+    "squat": "quads",
+    "leg press": "quads",
+    "ham curls": "hamstrings",
+    "romanian deadlift": "hamstrings",
+    "bench": "chest",
+    "bench press": "chest",
+    "ohp": "shoulders",
+    "overhead press": "shoulders",
+    "row": "back",
+    "pulldown": "back",
+    "deadlift": "back",
+    "bicep curl": "biceps",
+    "tricep": "triceps",
+    "calf raise": "calves",
+}
+
+# training_age thresholds (deliberately simple heuristics, see training_age()).
+ADVANCED_WEEKS_THRESHOLD = 104   # > this many weeks of logged history -> "advanced"
+INTERMEDIATE_WEEKS_THRESHOLD = 24  # >= this many distinct training weeks -> "intermediate"
+STALL_N = 3  # progression_stalled() default window used by training_age()
+
+# deload_due() thresholds.
+READINESS_DELOAD_THRESHOLD = 45
+LOW_HRV_STATUSES = {"UNBALANCED", "LOW", "POOR"}
+
 
 def _f(v):
     try:
@@ -71,6 +99,108 @@ def progression(set_records: list[dict], exercise: str) -> list[dict]:
         if d not in by or v > by[d]["best_e1rm"]:
             by[d] = {"date": d, "best_e1rm": v, "top_weight": r.get("weight")}
     return [by[d] for d in sorted(by)]
+
+
+def progression_stalled(set_records: list[dict], exercise: str, n: int = STALL_N) -> bool:
+    """True if the last n per-session best-e1RM points for `exercise` are non-increasing."""
+    pts = progression(set_records, exercise)
+    if len(pts) < n:
+        return False
+    vals = [p["best_e1rm"] for p in pts[-n:]]
+    return all(vals[i] <= vals[i - 1] for i in range(1, len(vals)))
+
+
+def _distinct_training_weeks(sessions: list[dict]) -> set:
+    weeks = set()
+    for s in sessions:
+        try:
+            d = date.fromisoformat(str(s.get("date", ""))[:10])
+        except ValueError:
+            continue
+        weeks.add(d - timedelta(days=d.weekday()))
+    return weeks
+
+
+def _most_trained_exercise(set_records: list[dict]) -> str | None:
+    counts: dict[str, int] = {}
+    for r in set_records:
+        ex = str(r.get("exercise", "")).strip().lower()
+        if not ex:
+            continue
+        counts[ex] = counts.get(ex, 0) + 1
+    return max(counts, key=counts.get, default=None)
+
+
+def training_age(sessions: list[dict], set_records: list[dict]) -> str:
+    """"novice"|"intermediate"|"advanced", from logged history + progression.
+
+    Heuristic (deliberately simple, defaults documented at the constants above):
+    - "advanced" if the session history spans > ADVANCED_WEEKS_THRESHOLD weeks.
+    - else "intermediate" if there are >= INTERMEDIATE_WEEKS_THRESHOLD distinct
+      Mon-Sun training weeks, OR the most-logged lift has stalled (its last
+      STALL_N per-session best-e1RM points are non-increasing).
+    - else "novice" (also the default for missing/empty input).
+    """
+    dates = []
+    for s in sessions:
+        try:
+            dates.append(date.fromisoformat(str(s.get("date", ""))[:10]))
+        except ValueError:
+            continue
+    if not dates:
+        return "novice"
+    span_weeks = (max(dates) - min(dates)).days / 7.0
+    if span_weeks > ADVANCED_WEEKS_THRESHOLD:
+        return "advanced"
+    distinct_weeks = len(_distinct_training_weeks(sessions))
+    top_ex = _most_trained_exercise(set_records)
+    stalled = bool(top_ex) and progression_stalled(set_records, top_ex, n=STALL_N)
+    if distinct_weeks >= INTERMEDIATE_WEEKS_THRESHOLD or stalled:
+        return "intermediate"
+    return "novice"
+
+
+def weekly_muscle_volume(set_records: list[dict], week_of: date) -> dict:
+    """Hard-set count per muscle group (via MUSCLE_MAP) for the Mon-Sun week containing week_of.
+
+    One `jim_sets` record == one hard set.
+    """
+    monday = week_of - timedelta(days=week_of.weekday())
+    sunday = monday + timedelta(days=6)
+    out: dict[str, int] = {}
+    for r in set_records:
+        try:
+            d = date.fromisoformat(str(r.get("date", ""))[:10])
+        except ValueError:
+            continue
+        if not (monday <= d <= sunday):
+            continue
+        ex = str(r.get("exercise", "")).strip().lower()
+        muscle = MUSCLE_MAP.get(ex, "other")
+        out[muscle] = out.get(muscle, 0) + 1
+    return out
+
+
+def easy_run_too_hard(session: dict, z2_ceiling_hr) -> bool:
+    """True iff a cardio session's avg HR ran above the Z2 ceiling."""
+    if (session or {}).get("type") not in CARDIO_TYPES:
+        return False
+    hr = _f(session.get("avg_hr"))
+    ceiling = _f(z2_ceiling_hr)
+    if hr is None or ceiling is None:
+        return False
+    return hr > ceiling
+
+
+def deload_due(recent_sessions: list[dict], recovery: dict) -> bool:
+    """True if recovery signals elevated fatigue (low readiness score or poor HRV status)."""
+    if not recovery:
+        return False
+    score = _f(recovery.get("readiness_score"))
+    if score is not None and score < READINESS_DELOAD_THRESHOLD:
+        return True
+    hrv = str(recovery.get("hrv_status") or "").upper()
+    return hrv in LOW_HRV_STATUSES
 
 
 def weekly_adherence(sessions: list[dict], programme: dict, today: date) -> dict:

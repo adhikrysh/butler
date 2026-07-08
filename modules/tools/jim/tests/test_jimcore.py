@@ -1,8 +1,10 @@
 # modules/tools/jim/tests/test_jimcore.py
-from datetime import date
+from datetime import date, timedelta
 from jimcore import (e1rm, exercise_metrics, session_volume, compute_prs, progression,
                      weekly_adherence, render_summary, render_plan_text,
-                     latest_active, active_goals, SESSION_TYPES, CARDIO_TYPES)
+                     latest_active, active_goals, SESSION_TYPES, CARDIO_TYPES,
+                     training_age, weekly_muscle_volume, progression_stalled,
+                     easy_run_too_hard, deload_due, MUSCLE_MAP)
 
 
 def test_e1rm():
@@ -93,3 +95,104 @@ def test_compute_cardio_prs():
         {"type": "strength", "distance_km": None, "duration_min": None, "date": "2026-07-13"}])
     assert prs["10k"]["pace_min_per_km"] == round(52 / 10.2, 2)
     assert prs["5k"]["pace_min_per_km"] == round(27 / 5.0, 2)
+
+
+# ---- Task 6: training-age + autoregulation helpers ----
+
+def _weeks(n, start="2026-01-05"):  # start on a Monday
+    d0 = date.fromisoformat(start)
+    return [(d0 + timedelta(weeks=i)).isoformat() for i in range(n)]
+
+
+_MODERATE_DATES = _weeks(8)  # 8 distinct training weeks: below the intermediate week threshold
+_MODERATE_SESSIONS = [{"date": d, "type": "strength"} for d in _MODERATE_DATES]
+
+# Squat is the most-logged lift (6 records) and its last 3 e1RM points are non-increasing.
+_STALLED_SQUAT = [
+    {"exercise": "squat", "e1rm": 150, "date": _MODERATE_DATES[0]},
+    {"exercise": "squat", "e1rm": 150, "date": _MODERATE_DATES[1]},
+    {"exercise": "squat", "e1rm": 160, "date": _MODERATE_DATES[2]},
+    {"exercise": "squat", "e1rm": 155, "date": _MODERATE_DATES[5]},
+    {"exercise": "squat", "e1rm": 150, "date": _MODERATE_DATES[6]},
+    {"exercise": "squat", "e1rm": 145, "date": _MODERATE_DATES[7]},
+]
+
+# Same lift, same schedule, but still climbing every time it's tested.
+_PROGRESSING_SQUAT = [
+    {"exercise": "squat", "e1rm": 100, "date": _MODERATE_DATES[0]},
+    {"exercise": "squat", "e1rm": 110, "date": _MODERATE_DATES[1]},
+    {"exercise": "squat", "e1rm": 120, "date": _MODERATE_DATES[2]},
+    {"exercise": "squat", "e1rm": 140, "date": _MODERATE_DATES[5]},
+    {"exercise": "squat", "e1rm": 150, "date": _MODERATE_DATES[6]},
+    {"exercise": "squat", "e1rm": 160, "date": _MODERATE_DATES[7]},
+]
+
+
+def test_training_age_empty_is_novice():
+    assert training_age([], []) == "novice"
+
+
+def test_training_age_novice_when_still_progressing():
+    assert training_age(_MODERATE_SESSIONS, _PROGRESSING_SQUAT) == "novice"
+
+
+def test_training_age_stalled_top_lift_flips_to_intermediate():
+    assert training_age(_MODERATE_SESSIONS, _STALLED_SQUAT) == "intermediate"
+
+
+def test_training_age_long_history_is_advanced():
+    sessions = [{"date": "2020-01-06", "type": "strength"}, {"date": "2026-07-01", "type": "strength"}]
+    assert training_age(sessions, []) == "advanced"
+
+
+def test_weekly_muscle_volume_rolls_up_quads():
+    records = [
+        {"exercise": "leg extension", "date": "2026-07-06T18:00"},
+        {"exercise": "leg extension", "date": "2026-07-07T18:00"},
+        {"exercise": "squat", "date": "2026-07-08T18:00"},
+        {"exercise": "bench", "date": "2026-07-08T18:00"},
+        {"exercise": "leg extension", "date": "2026-06-29T18:00"},  # prior week, excluded
+    ]
+    vol = weekly_muscle_volume(records, date(2026, 7, 8))
+    assert vol["quads"] == 3
+    assert vol["chest"] == 1
+    assert "quads" in MUSCLE_MAP.values()
+
+
+_OHP_STALLED = [
+    {"exercise": "ohp", "e1rm": 100, "date": "2026-06-01"},
+    {"exercise": "ohp", "e1rm": 100, "date": "2026-06-08"},
+    {"exercise": "ohp", "e1rm": 90, "date": "2026-06-15"},
+]
+_OHP_PROGRESSING = [
+    {"exercise": "ohp", "e1rm": 100, "date": "2026-06-01"},
+    {"exercise": "ohp", "e1rm": 105, "date": "2026-06-08"},
+    {"exercise": "ohp", "e1rm": 110, "date": "2026-06-15"},
+]
+
+
+def test_progression_stalled_true_when_non_increasing():
+    assert progression_stalled(_OHP_STALLED, "ohp") is True
+
+
+def test_progression_stalled_false_when_climbing():
+    assert progression_stalled(_OHP_PROGRESSING, "ohp") is False
+
+
+def test_progression_stalled_false_with_too_few_points():
+    assert progression_stalled(_OHP_STALLED[:2], "ohp") is False
+
+
+def test_easy_run_too_hard_true_and_false():
+    assert easy_run_too_hard({"type": "run", "avg_hr": 160}, 150) is True
+    assert easy_run_too_hard({"type": "run", "avg_hr": 140}, 150) is False
+    assert easy_run_too_hard({"type": "strength", "avg_hr": 200}, 150) is False
+    assert easy_run_too_hard({"type": "run"}, 150) is False
+
+
+def test_deload_due_on_low_readiness_or_hrv():
+    assert deload_due([], {"readiness_score": 40, "hrv_status": "BALANCED"}) is True
+    assert deload_due([], {"readiness_score": 70, "hrv_status": "UNBALANCED"}) is True
+    assert deload_due([], {"readiness_score": 70, "hrv_status": "BALANCED"}) is False
+    assert deload_due([], {}) is False
+    assert deload_due([], None) is False
