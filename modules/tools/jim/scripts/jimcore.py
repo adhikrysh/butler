@@ -1,53 +1,10 @@
 # modules/tools/jim/scripts/jimcore.py
 """jim coach logic — pure functions (no I/O, no gspread, no network)."""
-import re
+from datetime import date, datetime, timedelta
 
 SESSION_TYPES = {"strength", "run", "ride", "swim", "mobility", "sport", "other"}
-META_TYPES = {"goal", "plan", "note"}
-
-# the numeric core of a set: "5x5@100", "3 x 8 @ 80", unicode ×, optional decimal
-_CORE_RE = re.compile(r"(\d+)\s*[x×]\s*(\d+)\s*@\s*(\d+(?:\.\d+)?)")
-_WORD_RE = re.compile(r"[A-Za-z'\-]+")
-
-# nearest-standard distance buckets (km) with ±8% tolerance
+CARDIO_TYPES = {"run", "ride", "swim"}
 _DIST_BUCKETS = [(1, "1k"), (5, "5k"), (10, "10k"), (21.0975, "half"), (42.195, "full")]
-
-
-def parse_strength(remarks: str) -> list[dict]:
-    """Parse a strength remarks line into structured sets. Linear-time: scan for
-    each NxR@weight core, then take the trailing alphabetic words immediately
-    before it as the exercise name. Avoids regex backtracking on long free-text
-    remarks (a lazy name group that overlaps the following whitespace is O(n²))."""
-    out = []
-    text = remarks or ""
-    prev_end = 0
-    for m in _CORE_RE.finditer(text):
-        words = text[prev_end:m.start()].split()
-        prev_end = m.end()
-        name = []
-        for w in reversed(words):          # collect trailing alpha words as the name
-            if _WORD_RE.fullmatch(w):
-                name.insert(0, w)
-            else:
-                break
-        if not name:
-            continue
-        out.append({
-            "exercise": " ".join(name).lower(),
-            "sets": int(m.group(1)),
-            "reps": int(m.group(2)),
-            "weight": float(m.group(3)),
-        })
-    return out
-
-
-def e1rm(weight: float, reps: int) -> float:
-    """Estimated 1-rep-max (Epley). A single rep IS the 1RM; Epley only applies
-    for reps > 1 (at reps=1 the raw formula would inflate by 1/30)."""
-    reps = int(reps)
-    if reps <= 1:
-        return float(weight)
-    return float(weight) * (1 + reps / 30)
 
 
 def _f(v):
@@ -57,56 +14,116 @@ def _f(v):
         return None
 
 
-def _pace_bucket(dist_km: float):
-    for std, label in _DIST_BUCKETS:
-        if abs(dist_km - std) <= std * 0.08 + 1e-9:   # epsilon: float-safe boundary
-            return label
-    return None
+def e1rm(weight, reps) -> float:
+    """Estimated 1-rep-max (Epley). A single rep IS the 1RM; Epley only for reps>1."""
+    r = int(reps)
+    w = float(weight)
+    return w if r <= 1 else round(w * (1 + r / 30), 1)
 
 
-def compute_prs(rows: list[dict]) -> dict:
-    """Best e1RM per lift + best pace per distance bucket, from the log."""
-    strength, cardio = {}, {}
-    for r in rows:
-        t = str(r.get("type", "")).lower()
-        if t == "strength":
-            for s in parse_strength(r.get("remarks", "")):
-                val = round(e1rm(s["weight"], s["reps"]), 1)
-                cur = strength.get(s["exercise"])
-                if cur is None or val > cur["e1rm"]:
-                    strength[s["exercise"]] = {
-                        "e1rm": val, "weight": s["weight"], "reps": s["reps"],
-                        "date": r.get("datetime")}
-        elif t in ("run", "ride", "swim"):
-            dist, dur = _f(r.get("distance_km")), _f(r.get("duration_min"))
-            if dist and dur and dist > 0:
-                bucket = _pace_bucket(dist)
-                if not bucket:
-                    continue
-                pace = round(dur / dist, 2)
-                cur = cardio.get(bucket)
-                if cur is None or pace < cur["pace_min_km"]:
-                    cardio[bucket] = {"pace_min_km": pace, "distance_km": dist,
-                                      "date": r.get("datetime")}
-    return {"strength": strength, "cardio": cardio}
+def exercise_metrics(sets: list[dict]) -> dict:
+    """top_weight, best_e1rm, total volume, set count for one exercise's sets."""
+    ws = [(_f(s.get("weight")), s.get("reps")) for s in sets]
+    valid = [(w, int(r)) for w, r in ws if w is not None and r not in (None, "")]
+    top = max((w for w, _ in valid), default=None)
+    e1s = [e1rm(w, r) for w, r in valid]
+    vol = sum(w * r for w, r in valid)
+    return {"n_sets": len(sets), "top_weight": top,
+            "best_e1rm": max(e1s) if e1s else None, "volume": round(vol, 1)}
 
 
-def _by_dt(rows):
-    return sorted(rows, key=lambda r: str(r.get("datetime", "")))
+def session_volume(exercises: list[dict]) -> float:
+    return round(sum(exercise_metrics(e.get("sets", []))["volume"] for e in exercises), 1)
 
 
-def latest_by_type(rows: list[dict], type_: str) -> dict | None:
-    matches = [r for r in rows if str(r.get("type", "")).lower() == type_]
-    return _by_dt(matches)[-1] if matches else None
+def compute_prs(set_records: list[dict]) -> dict:
+    """Best e1RM per exercise from flat set-records ({exercise,e1rm,weight,reps,date})."""
+    prs = {}
+    for r in set_records:
+        ex = str(r.get("exercise", "")).strip().lower()
+        v = r.get("e1rm")
+        if not ex or v is None:
+            continue
+        if ex not in prs or v > prs[ex]["e1rm"]:
+            prs[ex] = {"e1rm": v, "weight": r.get("weight"), "reps": r.get("reps"),
+                       "date": r.get("date")}
+    return prs
 
 
-def latest_goals(rows: list[dict]) -> list[dict]:
-    """All goal rows, newest first."""
-    goals = [r for r in rows if str(r.get("type", "")).lower() == "goal"]
-    return list(reversed(_by_dt(goals)))
+def progression(set_records: list[dict], exercise: str) -> list[dict]:
+    """Best e1RM per day for one exercise, oldest→newest."""
+    ex = exercise.strip().lower()
+    by = {}
+    for r in set_records:
+        if str(r.get("exercise", "")).strip().lower() != ex:
+            continue
+        v = r.get("e1rm")
+        if v is None:
+            continue
+        d = str(r.get("date", ""))[:10]
+        if d not in by or v > by[d]["best_e1rm"]:
+            by[d] = {"date": d, "best_e1rm": v, "top_weight": r.get("weight")}
+    return [by[d] for d in sorted(by)]
 
 
-def recent_sessions(rows: list[dict], n: int) -> list[dict]:
-    """Last n session (non-meta) rows, newest first."""
-    sessions = [r for r in rows if str(r.get("type", "")).lower() in SESSION_TYPES]
-    return list(reversed(_by_dt(sessions)))[:n]
+def weekly_adherence(sessions: list[dict], programme: dict, today: date) -> dict:
+    """Sessions logged this week (Mon–Sun) vs the programme's target frequency."""
+    monday = today - timedelta(days=today.weekday())
+    done = 0
+    for s in sessions:
+        try:
+            d = date.fromisoformat(str(s.get("date", ""))[:10])
+        except ValueError:
+            continue
+        if monday <= d <= monday + timedelta(days=6):
+            done += 1
+    target = int((programme or {}).get("freq_per_week") or 0)
+    return {"done": done, "target": target, "week_of": monday.isoformat()}
+
+
+def _fmt(n):
+    n = _f(n)
+    if n is None:
+        return ""
+    return str(int(n)) if float(n).is_integer() else str(n)
+
+
+def render_summary(session: dict, exercises: list[dict]) -> str:
+    """Readable one-line summary for the Sheet Sessions row."""
+    if session.get("type") in CARDIO_TYPES:
+        parts = []
+        if session.get("distance_km"):
+            parts.append(f"{_fmt(session['distance_km'])}km")
+        if session.get("duration_min"):
+            parts.append(f"{_fmt(session['duration_min'])}min")
+        if session.get("avg_hr"):
+            parts.append(f"avg {_fmt(session['avg_hr'])}bpm")
+        return " · ".join(parts) or (session.get("feel") or "")
+    chunks = []
+    for e in exercises:
+        sets = ",".join(f"{_fmt(s.get('weight'))}×{s.get('reps')}" for s in e.get("sets", []))
+        chunks.append(f"{e.get('exercise', '')} {sets}".strip())
+    return " · ".join(chunks)
+
+
+def render_plan_text(plan: dict) -> str:
+    """Readable one-cell render of the structured programme."""
+    days = []
+    for d in (plan or {}).get("days", []):
+        exs = "; ".join(
+            f"{e.get('exercise', '')} {e.get('sets', '')}×{e.get('reps', '')}"
+            + (f" @{e['load']}" if e.get("load") else "")
+            for e in d.get("exercises", []))
+        days.append(f"{d.get('day', '')}/{d.get('focus', '')}: {exs}")
+    freq = plan.get("freq_per_week")
+    tail = f" | {freq}×/wk" if freq else ""
+    return " | ".join(days) + tail
+
+
+def latest_active(programme_rows: list[dict]) -> dict | None:
+    act = [r for r in programme_rows if str(r.get("active", "")) in ("1", "True", "true")]
+    return max(act, key=lambda r: str(r.get("date", "")), default=None)
+
+
+def active_goals(goal_rows: list[dict]) -> list[dict]:
+    return [g for g in goal_rows if str(g.get("status", "active")).lower() == "active"]
