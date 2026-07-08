@@ -88,6 +88,10 @@ Update a goal's current/status later:
 ```
 uv run .../jim.py goal-update --match '{"metric":"bodyweight"}' --json '{"current":"70"}'
 ```
+**When he tells you his bodyweight, log it** (he has no smart scale — this is how his
+weight trend gets built): `jim.py weight --kg 69.2` writes the weigh-in to Garmin's
+trend AND updates the bodyweight goal's `current`. Judge goals on the *trend*, not one
+weigh-in.
 
 ## Progress — real numbers
 ```
