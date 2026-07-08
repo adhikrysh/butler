@@ -77,3 +77,29 @@ def test_enrich_session_never_raises_on_client_failure():
     session = {"type": "strength", "date": "2026-07-08"}
     result = garmin.enrich_session(Boom(), session)
     assert result == {"type": "strength", "date": "2026-07-08"}
+
+
+class FakeWeighInG:
+    def __init__(self):
+        self.calls = []
+
+    def add_weigh_in(self, weight, unitKey="kg", timestamp=""):
+        self.calls.append({"weight": weight, "unitKey": unitKey, "timestamp": timestamp})
+        return {"value": weight, "unitKey": unitKey}
+
+
+class BoomWeighInG:
+    def add_weigh_in(self, weight, unitKey="kg", timestamp=""):
+        raise RuntimeError("garmin down")
+
+
+def test_log_weight_calls_add_weigh_in_with_kg():
+    fake = FakeWeighInG()
+    result = garmin.log_weight(fake, 69.2)
+    assert result == {"ok": True, "kg": 69.2}
+    assert fake.calls == [{"weight": 69.2, "unitKey": "kg", "timestamp": ""}]
+
+
+def test_log_weight_never_raises_on_failure():
+    result = garmin.log_weight(BoomWeighInG(), 69.2)
+    assert result == {"ok": False, "error": "garmin down"}

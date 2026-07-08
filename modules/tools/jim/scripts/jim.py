@@ -102,6 +102,7 @@ def main() -> int:
         sp = sub.add_parser(name); sp.add_argument("--json", required=True, dest="payload")
     gu = sub.add_parser("goal-update"); gu.add_argument("--match", required=True); gu.add_argument("--json", required=True, dest="payload")
     pr = sub.add_parser("progress"); pr.add_argument("--exercise", default=None)
+    wt = sub.add_parser("weight"); wt.add_argument("--kg", required=True, type=float)
     for name in ("current", "prs", "dump", "resync"):
         sub.add_parser(name)
 
@@ -125,6 +126,22 @@ def main() -> int:
     elif args.cmd == "goal-update":
         res = s.update_goal(json.loads(args.match), json.loads(args.payload))
         print(json.dumps(res, ensure_ascii=False) if res else json.dumps({"updated": None}))
+
+    elif args.cmd == "weight":
+        kg = args.kg
+        try:
+            g = gm.client()
+            garmin_result = gm.log_weight(g, kg)
+        except Exception as exc:
+            garmin_result = {"ok": False, "error": str(exc)}
+        # Best-effort either way: store the weight on the bodyweight goal even
+        # if the Garmin write failed, so the user's report isn't lost.
+        updated = s.update_goal({"metric": "bodyweight"}, {"current": kg})
+        print(json.dumps({
+            "weight_logged": kg,
+            "garmin": garmin_result,
+            "goal_updated": updated is not None,
+        }, ensure_ascii=False))
 
     elif args.cmd == "current":
         recs = s.set_records()

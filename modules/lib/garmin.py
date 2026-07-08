@@ -293,6 +293,20 @@ def weight_series(g, date_str, days=30):
     }
 
 
+def log_weight(g, kg, ts=None) -> dict:
+    """Best-effort: write a weigh-in to Garmin (kg). Never raises.
+
+    `ts` is an optional ISO-format timestamp string; Garmin defaults to "now"
+    when omitted. Returns {"ok": True, "kg": kg} on success or
+    {"ok": False, "error": str(exc)} on any failure (never propagates).
+    """
+    try:
+        g.add_weigh_in(weight=kg, unitKey="kg", timestamp=ts or "")
+        return {"ok": True, "kg": kg}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def garmin_prs(g):
     """Personal records as [{"label": ..., "value": ...}, ...]."""
     prs = _safe(g.get_personal_record)
