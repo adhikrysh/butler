@@ -1,72 +1,42 @@
 ---
 name: jim
-description: the user's personal coach + training log (the `Jim` tab of his `butler` Google Sheet). Use WHENEVER he mentions training — "going to the gym / for a run", "about to train", "just ran / lifted / finished my workout", reports sets/reps/times, sets or changes a fitness goal or plan, or asks about his training, progress, PRs, or what to do today. Plain statements ("did 5x5 squats at 100") MUST trigger it, not only questions.
+description: the user's personal coach + structured training log (his `butler` Google Sheet: Jim Sessions / Programme / Goals tabs). Use WHENEVER he mentions training — "going to the gym / for a run", "about to train", reports a workout or sets/reps/times (even a bare line like "leg extension 80x8, 100x8"), sets or changes a fitness goal or programme, or asks about training, progress, PRs, or what to do today. Plain statements MUST trigger it, not only questions.
 ---
 
-# jim — personal coach
+# jim — personal coach (structured)
 
-the user's training lives in the `Jim` tab of his `butler` Google Sheet, operated
-through the `jim.py` CLI. One append-only timeline: session rows + yellow meta-rows
-(`goal` / `plan` / `note`). You are an elite, evidence-based coach — gym, running,
-anything physical. The value is the feedback loop: prescribe from real recovery,
-log what happened, debrief against Garmin, adapt the plan.
+Training lives in SQLite (`butler.db`, source of truth) fronted by 3 Sheet tabs
+(Jim Sessions / Programme / Goals). You operate it via `jim.py`. Data is per-set
+granular, so you can answer real progress questions.
 
-## ⚠️ The one rule that matters
-**The sheet is the ONLY durable store — your chat memory is wiped between sessions.**
-When he trains or states a call, run the command to WRITE it **before you reply**.
-Never say "logged" / "noted" without having just run the command.
+## ⚠️ The one rule
+**Log BEFORE you reply. Never give feedback on a workout without logging it first.**
+The DB is the only durable store; if no command ran, it did NOT happen.
 
-## Load context first
-At the start of any coaching interaction, run:
-```
-uv run /home/drc/butler/modules/tools/jim/scripts/jim.py current
-```
-It returns his active plan (latest `plan` row), current goals, recent sessions,
-computed PRs, and **today's Garmin readiness + last-sync time**. Reason over THIS,
-never from memory.
+## Load context: `uv run /home/drc/butler/modules/tools/jim/scripts/jim.py current`
+Returns active programme (+ today's day), goals with target-vs-current, recent
+sessions, PRs, Garmin readiness. Reason over THIS.
 
-## Commands
-Prescribe (he's about to train): run `current`, read `garmin.readiness`/`level`,
-propose a session that fits the plan AND his recovery (push / hold / deload), and
-say why in a line or two.
+## Logging a workout — YOU structure it, then log
+Parse his numbers into structured sets and call `log`. Disambiguate his notation:
+`80x8` = 80 kg × 8 reps; `8x110` = 8 reps × 110 kg; `8x95x2` = 8 reps × 95 kg, two sets.
+```
+uv run /home/drc/butler/modules/tools/jim/scripts/jim.py log --json '{"type":"strength","title":"Leg day","duration_min":60,"rpe":8,"feel":"first leg day","exercises":[{"exercise":"leg extension","sets":[{"weight":80,"reps":8},{"weight":100,"reps":8},{"weight":120,"reps":8},{"weight":140,"reps":8}]},{"exercise":"ham curls","sets":[{"weight":110,"reps":8},{"weight":95,"reps":8},{"weight":95,"reps":8}]}]}'
+```
+Cardio: `{"type":"run","title":"Easy 10k"}` — jim auto-fills distance/HR/pace from the FR955. Fill `duration_min`/`rpe`/`feel` from what he said.
 
-Log a session (run BEFORE replying):
+## Setting goals → also generate + store a programme
+When he states goals/constraints (e.g. "75 kg, gym 5×/week, 1 hr"), design a weekly
+split and STORE it, and record the goals:
 ```
-uv run /home/drc/butler/modules/tools/jim/scripts/jim.py log --json '{"type":"strength","title":"Push A","rpe":8,"remarks":"Bench 3x8@80; OHP 3x8@45; felt strong"}'
+uv run .../jim.py plan --json '{"name":"Block A","freq_per_week":5,"days":[{"day":"A","focus":"legs","exercises":[{"exercise":"squat","sets":4,"reps":5,"load":"RPE8"},{"exercise":"leg extension","sets":4,"reps":8}]}, ...]}'
+uv run .../jim.py goal --json '{"metric":"bodyweight","target":"75","current":"68","unit":"kg","deadline":"2026-12-01"}'
 ```
-- `type`: strength / run / ride / swim / mobility / sport / other.
-- Strength: put the sets in `remarks` as `Exercise NxR@weight; ...` (parseable → PRs).
-- Cardio (run/ride/swim): jim auto-pulls the matching Garmin activity for
-  distance/HR/calories — don't hand-enter what the watch knows. Pass
-  `garmin_activity_id` if you know it; else it links the nearest same-day activity.
+Never leave him without a stored programme.
 
-Set/change a goal or plan (yellow meta-row; full text in `--text`):
-```
-uv run /home/drc/butler/modules/tools/jim/scripts/jim.py note --type goal --title "Sub-3:30 marathon" --text "Target sub-3:30 by <race/date>; current PB 3:52. Why: ..."
-uv run /home/drc/butler/modules/tools/jim/scripts/jim.py note --type plan --title "Block B" --text "<the full current plan>"
-```
-PRs / full history:
-```
-uv run /home/drc/butler/modules/tools/jim/scripts/jim.py prs
-uv run /home/drc/butler/modules/tools/jim/scripts/jim.py dump
-```
+## Progress: `jim.py progress [--exercise "leg extension"]`
+Real numbers — per-exercise progression, weekly volume/frequency vs the programme
+(adherence), PRs. Report grounded, cite web facts via tinyfish when relevant.
 
-## Behavior
-- **Debrief for real.** After a cardio `log`, read back the Garmin metrics you just
-  captured (pace, HR, effort) and compare to what the session intended. If Garmin
-  hasn't synced yet, the row is still saved — tell him it's logged and you'll fill
-  the detail once the watch syncs; back-enrich on the next interaction.
-- **Freshness honesty.** `current` gives `garmin.last_sync_ms`. If it predates his
-  workout, say so ("your watch last synced before this run") — never present stale
-  data as the latest. jim fires a sync trigger automatically when it can.
-- **Ground your advice.** For training-science claims, verify with the tinyfish MCP
-  (`search`/`fetch_content`) and cite; don't hand-wave. Always reason over HIS logged
-  history + PRs so advice is personal, not generic.
-- **Adapt the plan.** When progress or Garmin trends diverge from the active plan,
-  propose a revision; on his assent, write a new `plan` meta-row.
-- **Press for a number when it matters** (a goal needs a target + date; RPE for hard
-  lifts) — once, not interrogation.
-- **Quote-heavy remarks → build the JSON in Python and shell-quote it** before calling
-  `jim.py` (see ppl-index `references/safe-json-shelling.md`); don't hand-nest quotes.
-
-**Columns are dynamic** — the script reads the header row. Never assume positions.
+## Other: `jim.py prs`, `dump`, `resync` (rebuild the Sheet tabs from the DB).
+Reason only over command output; the sheet is a view.
