@@ -3,13 +3,10 @@
 # requires-python = ">=3.11"
 # dependencies = ["gspread>=6", "garminconnect>=0.2.20", "tzdata"]
 # ///
-"""jim — personal-coach CLI over the `Jim` tab of the butler spreadsheet.
+"""jim v2 CLI — structured training log/programme/goals over jimstore (SQLite) + Garmin.
 
-Subcommands print JSON (interactive) to stdout; failures -> stderr + nonzero.
-Header row = schema. Columns: datetime, type, title, duration_min, distance_km,
-avg_hr, calories, rpe, garmin_activity_id, remarks.
-
-Garmin is best-effort everywhere: a flaky watch/sync never blocks a write.
+The AGENT structures freeform input into records and passes JSON; this CLI never parses
+natural-language sets. Reads are local (DB); Garmin/Sheet are best-effort (never block a write).
 """
 import os
 import sys
@@ -20,67 +17,45 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
-from store import Store  # noqa: E402
-import garmin as gm       # noqa: E402
-from jimcore import compute_prs, latest_by_type, latest_goals, recent_sessions  # noqa: E402
+import garmin as gm            # noqa: E402
+from jimstore import JimStore  # noqa: E402
+import jimcore                 # noqa: E402
 
-TAB = "Jim"
-HEADERS = ["datetime", "type", "title", "duration_min", "distance_km",
-           "avg_hr", "calories", "rpe", "garmin_activity_id", "remarks"]
-META_YELLOW = {"red": 1.0, "green": 0.949, "blue": 0.8}   # ~#FFF2CC
 PACIFIC = ZoneInfo("America/Los_Angeles")
-# map a jim cardio type -> Garmin activityType keywords, for safe auto-matching
-_TYPE_KEYWORDS = {"run": ("run",), "ride": ("cycl", "bik", "ride"), "swim": ("swim",)}
-
-
-def _now():
-    return datetime.now(PACIFIC).strftime("%Y-%m-%dT%H:%M")
 
 
 def _garmin_readiness():
-    """Best-effort: today's training readiness score/level, else None."""
     try:
         g = gm.client()
         today = datetime.now(PACIFIC).date().isoformat()
-        tr_list = gm.training_readiness(g, today)
-        tr = max(tr_list, key=lambda x: x.get("timestamp", "")) if tr_list else {}
-        sync_ms, device = gm.last_sync(g)
-        return {"readiness": tr.get("score"), "level": tr.get("level"),
-                "last_sync_ms": sync_ms, "device": device}
+        tr = gm.training_readiness(g, today)
+        best = max(tr, key=lambda x: x.get("timestamp", "")) if tr else {}
+        sync_ms, dev = gm.last_sync(g)
+        return {"readiness": best.get("score"), "level": best.get("level"),
+                "last_sync_ms": sync_ms, "device": dev}
     except Exception as exc:
         return {"garmin_error": str(exc)}
 
 
-def _enrich_from_garmin(rec: dict):
-    """If the session looks like cardio, attach the matching Garmin activity's
-    metrics. Best-effort — a failure leaves the row as-is (log never lost)."""
+def _enrich_cardio(rec):
+    """Best-effort: fill distance/HR/calories/duration + bodyweight from the FR955."""
     try:
         g = gm.client()
-        # trigger a sync if a jim-scoped trigger is configured, then gate briefly
-        trig = os.environ.get("JIM_SYNC_CMD")
-        gm.ensure_fresh_sync(g, trigger_cmd=trig,
+        gm.ensure_fresh_sync(g, trigger_cmd=os.environ.get("JIM_SYNC_CMD"),
                              timeout=int(os.environ.get("JIM_SYNC_TIMEOUT", "60")),
                              poll=int(os.environ.get("JIM_SYNC_POLL", "10")))
         today = datetime.now(PACIFIC).date().isoformat()
         acts = [gm.summarize_activity(a) for a in gm.activities(g, today, today)]
-        want_id = rec.get("garmin_activity_id")
-        match = None
-        if want_id:
-            match = next((a for a in acts if str(a["garmin_activity_id"]) == str(want_id)), None)
-        else:
-            kws = _TYPE_KEYWORDS.get(str(rec.get("type", "")).lower(), ())
-            typed = [a for a in acts if any(k in str(a.get("type") or "").lower() for k in kws)]
-            if typed:
-                match = typed[-1]        # most recent activity of the matching type
-            elif len(acts) == 1:
-                match = acts[0]          # unambiguous: only one activity logged today
-            # else: ambiguous (multiple, none same-type) -> don't guess; wait for an explicit id
-        if match:
-            rec.setdefault("garmin_activity_id", match["garmin_activity_id"])
-            for k_src, k_dst in (("distance_km", "distance_km"), ("avg_hr", "avg_hr"),
-                                 ("calories", "calories"), ("duration_min", "duration_min")):
-                if not rec.get(k_dst) and match.get(k_src) is not None:
-                    rec[k_dst] = match[k_src]
+        want = rec.get("garmin_activity_id")
+        kw = {"run": ("run",), "ride": ("cycl", "bik"), "swim": ("swim",)}.get(rec.get("type"), ())
+        typed = [a for a in acts if any(k in str(a.get("type") or "").lower() for k in kw)]
+        m = (next((a for a in acts if str(a["garmin_activity_id"]) == str(want)), None) if want
+             else (typed[-1] if typed else (acts[0] if len(acts) == 1 else None)))
+        if m:
+            rec.setdefault("garmin_activity_id", m["garmin_activity_id"])
+            for k in ("distance_km", "avg_hr", "calories", "duration_min"):
+                if not rec.get(k) and m.get(k) is not None:
+                    rec[k] = m[k]
     except Exception as exc:
         print(f"garmin enrich skipped: {exc}", file=sys.stderr)
     return rec
@@ -89,69 +64,64 @@ def _enrich_from_garmin(rec: dict):
 def main() -> int:
     p = argparse.ArgumentParser(prog="jim")
     sub = p.add_subparsers(dest="cmd", required=True)
-
-    lg = sub.add_parser("log", help="append a training session")
-    lg.add_argument("--json", required=True, dest="payload")
-    lg.add_argument("--no-garmin", action="store_true", help="skip Garmin enrichment")
-
-    nt = sub.add_parser("note", help="append a yellow meta-row (goal/plan/note)")
-    nt.add_argument("--type", required=True, choices=["goal", "plan", "note"])
-    nt.add_argument("--text", required=True)
-    nt.add_argument("--title", default="")
-
-    sub.add_parser("current", help="coach context blob (plan+goals+recent+PRs+readiness)")
-    sub.add_parser("prs", help="computed PRs")
-    sub.add_parser("dump", help="whole tab as JSON")
-    sub.add_parser("resync", help="rebuild the Sheet view from the local DB (drift repair)")
+    for name in ("log", "plan", "goal"):
+        sp = sub.add_parser(name); sp.add_argument("--json", required=True, dest="payload")
+    gu = sub.add_parser("goal-update"); gu.add_argument("--match", required=True); gu.add_argument("--json", required=True, dest="payload")
+    pr = sub.add_parser("progress"); pr.add_argument("--exercise", default=None)
+    for name in ("current", "prs", "dump", "resync"):
+        sub.add_parser(name)
 
     args = p.parse_args()
-    s = Store()
+    s = JimStore()
 
     if args.cmd == "log":
-        s.ensure_tab(TAB, HEADERS)
         rec = json.loads(args.payload)
-        rec.setdefault("datetime", _now())
-        rec.setdefault("type", "other")
-        if not args.no_garmin and str(rec.get("type", "")).lower() in ("run", "ride", "swim"):
-            rec = _enrich_from_garmin(rec)
-        s.append(TAB, rec)
-        print(json.dumps(rec, ensure_ascii=False))
+        exercises = rec.pop("exercises", [])
+        if rec.get("type") in jimcore.CARDIO_TYPES:
+            rec = _enrich_cardio(rec)
+        sid = s.log_session(rec, exercises)
+        print(json.dumps({"logged_session": sid, "type": rec.get("type")}, ensure_ascii=False))
 
-    elif args.cmd == "note":
-        s.ensure_tab(TAB, HEADERS)
-        rec = {"datetime": _now(), "type": args.type,
-               "title": args.title, "remarks": args.text}
-        s.append_colored(TAB, rec, background=META_YELLOW)
-        print(json.dumps(rec, ensure_ascii=False))
+    elif args.cmd == "plan":
+        print(json.dumps({"programme": s.set_programme(json.loads(args.payload))}))
+
+    elif args.cmd == "goal":
+        print(json.dumps({"goal": s.add_goal(json.loads(args.payload))}))
+
+    elif args.cmd == "goal-update":
+        res = s.update_goal(json.loads(args.match), json.loads(args.payload))
+        print(json.dumps(res, ensure_ascii=False) if res else "no matching goal")
 
     elif args.cmd == "current":
-        rows = s.records(TAB)
+        recs = s.set_records()
         print(json.dumps({
-            "plan": latest_by_type(rows, "plan"),
-            "goals": latest_goals(rows),
-            "recent_sessions": recent_sessions(rows, 7),
-            "prs": compute_prs(rows),
+            "programme": jimcore.latest_active(s.programmes()),
+            "goals": jimcore.active_goals(s.goals()),
+            "recent_sessions": s.sessions()[-7:],
+            "prs": jimcore.compute_prs(recs),
             "garmin": _garmin_readiness(),
-        }, indent=2, ensure_ascii=False))
+        }, indent=2, ensure_ascii=False, default=str))
+
+    elif args.cmd == "progress":
+        recs = s.set_records()
+        out = {"prs": jimcore.compute_prs(recs),
+               "adherence": jimcore.weekly_adherence(s.sessions(),
+                            jimcore.latest_active(s.programmes()) or {}, datetime.now(PACIFIC).date())}
+        if args.exercise:
+            out["progression"] = jimcore.progression(recs, args.exercise)
+        print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
 
     elif args.cmd == "prs":
-        print(json.dumps(compute_prs(s.records(TAB)), indent=2, ensure_ascii=False))
+        print(json.dumps(jimcore.compute_prs(s.set_records()), indent=2, ensure_ascii=False, default=str))
 
     elif args.cmd == "dump":
-        print(json.dumps(s.records(TAB), indent=2, ensure_ascii=False))
+        print(json.dumps({"sessions": s.sessions(), "sets": s.set_records(),
+                          "programmes": s.programmes(), "goals": s.goals()},
+                         indent=2, ensure_ascii=False, default=str))
 
     elif args.cmd == "resync":
-        from sheets import Sheet
-        rows = s.records(TAB)                      # local DB = source of truth
-        sheet = Sheet(); sheet.ensure_tab(TAB, HEADERS)
-        ws = sheet._ws(TAB)
-        ws.clear(); ws.update([HEADERS] + [[str(r.get(h, "")) for h in HEADERS] for r in rows])
-        # re-apply yellow to meta rows
-        from sheets import _col_letter
-        for i, r in enumerate(rows, start=2):
-            if str(r.get("type", "")).lower() in ("goal", "plan", "note"):
-                ws.format(f"A{i}:{_col_letter(len(HEADERS))}{i}", {"backgroundColor": META_YELLOW})
-        print(json.dumps({"resynced": len(rows)}))
+        s.render_sheets()
+        print(json.dumps({"resynced": len(s.sessions())}))
 
     return 0
 
