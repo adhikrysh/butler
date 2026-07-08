@@ -191,11 +191,11 @@ def test_easy_run_too_hard_true_and_false():
 
 
 def test_deload_due_on_low_readiness_or_hrv():
-    assert deload_due([], {"readiness_score": 40, "hrv_status": "BALANCED"}) is True
-    assert deload_due([], {"readiness_score": 70, "hrv_status": "UNBALANCED"}) is True
-    assert deload_due([], {"readiness_score": 70, "hrv_status": "BALANCED"}) is False
-    assert deload_due([], {}) is False
-    assert deload_due([], None) is False
+    assert deload_due({"readiness_score": 40, "hrv_status": "BALANCED"}) is True
+    assert deload_due({"readiness_score": 70, "hrv_status": "UNBALANCED"}) is True
+    assert deload_due({"readiness_score": 70, "hrv_status": "BALANCED"}) is False
+    assert deload_due({}) is False
+    assert deload_due(None) is False
 
 
 # ---- Task 6 review follow-up: close coverage gaps on already-correct branches ----
@@ -233,6 +233,6 @@ def test_weekly_muscle_volume_buckets_unmapped_exercise_as_other():
 def test_deload_due_readiness_boundary():
     # Exactly at the threshold is NOT due (strict "<" in the implementation); one point
     # below IS due; one point above is not. Guards against a future "<" -> "<=" flip.
-    assert deload_due([], {"readiness_score": READINESS_DELOAD_THRESHOLD}) is False
-    assert deload_due([], {"readiness_score": READINESS_DELOAD_THRESHOLD - 1}) is True
-    assert deload_due([], {"readiness_score": READINESS_DELOAD_THRESHOLD + 1}) is False
+    assert deload_due({"readiness_score": READINESS_DELOAD_THRESHOLD}) is False
+    assert deload_due({"readiness_score": READINESS_DELOAD_THRESHOLD - 1}) is True
+    assert deload_due({"readiness_score": READINESS_DELOAD_THRESHOLD + 1}) is False

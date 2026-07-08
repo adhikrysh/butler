@@ -149,11 +149,16 @@ def enrich_session(g, session, sync_cmd=None):
     its matching same-day Garmin activity.
 
     Matches by `session["garmin_activity_id"]` if set, else by a type ->
-    activity-type-keyword lookup, else falls back to the day's only activity
-    (if there's exactly one). Fills `duration_min, avg_hr, max_hr, calories,
-    aerobic_te, anaerobic_te` (+ `distance_km` for cardio types), only where
-    the session field is currently empty. Never raises — on any failure the
-    session is returned unchanged.
+    activity-type-keyword lookup. The bare "day's only activity" fallback only
+    applies to session types with NO keyword entry (e.g. sport/other) — for a
+    mapped type (strength/run/ride/swim/mobility), an unmatched keyword search
+    leaves the session unenriched rather than grabbing an unrelated same-day
+    activity (e.g. an evening strength session must not inherit a morning
+    run's HR/calories just because it's the day's only recorded activity).
+    Fills `duration_min, avg_hr, max_hr, calories, aerobic_te, anaerobic_te`
+    (+ `distance_km` for cardio types), only where the session field is
+    currently empty. Never raises — on any failure the session is returned
+    unchanged.
     """
     try:
         if sync_cmd:
@@ -161,10 +166,12 @@ def enrich_session(g, session, sync_cmd=None):
         day = str(session.get("date") or "")[:10] or datetime.now(timezone.utc).astimezone().date().isoformat()
         acts = [summarize_activity(a) for a in activities(g, day, day)]
         want = session.get("garmin_activity_id")
-        kw = _TYPE_KEYWORDS.get(session.get("type"), ())
+        session_type = session.get("type")
+        mapped = session_type in _TYPE_KEYWORDS
+        kw = _TYPE_KEYWORDS.get(session_type, ())
         typed = [a for a in acts if any(k in str(a.get("type") or "").lower() for k in kw)]
         m = (next((a for a in acts if str(a["garmin_activity_id"]) == str(want)), None) if want
-             else (typed[-1] if typed else (acts[0] if len(acts) == 1 else None)))
+             else (typed[-1] if typed else (acts[0] if (len(acts) == 1 and not mapped) else None)))
         if m:
             session.setdefault("garmin_activity_id", m["garmin_activity_id"])
             fields = ["duration_min", "avg_hr", "max_hr", "calories", "aerobic_te", "anaerobic_te"]
@@ -272,8 +279,44 @@ def training_trajectory(g, date_str):
     }
 
 
+def _latest_daily_weight_g(summaries):
+    """Grams from the most-recent dailyWeightSummaries entry, or None.
+
+    NOTE: the exact per-day key hasn't been live-verified (no weigh-ins logged
+    yet) — defensively try the likely shapes (mirrors the Garmin Connect
+    weight-history payload) and confirm/adjust once a real weigh-in exists.
+    """
+    if not isinstance(summaries, list) or not summaries:
+        return None
+    try:
+        latest = max(
+            (s for s in summaries if isinstance(s, dict)),
+            key=lambda s: str(s.get("summaryDate", "")), default=None)
+    except Exception:
+        return None
+    if not isinstance(latest, dict):
+        return None
+    lw = latest.get("latestWeight")
+    if isinstance(lw, dict) and isinstance(lw.get("weight"), (int, float)):
+        return lw["weight"]
+    if isinstance(latest.get("weight"), (int, float)):
+        return latest["weight"]
+    metrics = latest.get("allWeightMetrics")
+    if isinstance(metrics, list) and metrics:
+        last = metrics[-1]
+        if isinstance(last, dict) and isinstance(last.get("weight"), (int, float)):
+            return last["weight"]
+    return None
+
+
 def weight_series(g, date_str, days=30):
-    """Weight trend over the trailing `days` window ending on date_str."""
+    """Weight trend over the trailing `days` window ending on date_str.
+
+    `latest_kg` is the TRUE most-recent weigh-in (from the last
+    dailyWeightSummaries entry); `avg_30d_kg` is the range average Garmin
+    reports for the window. Callers wanting "current weight" should use
+    `latest_kg`, not `avg_30d_kg`.
+    """
     try:
         end_dt = datetime.strptime(date_str, "%Y-%m-%d")
         start_str = (end_dt - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -284,12 +327,15 @@ def weight_series(g, date_str, days=30):
     w = w if isinstance(w, dict) else {}
     avg = w.get("totalAverage")
     avg = avg if isinstance(avg, dict) else {}
-    weight_g = avg.get("weight")
+    avg_weight_g = avg.get("weight")
     trend = w.get("dailyWeightSummaries")
+    trend = trend if isinstance(trend, list) else []
+    latest_weight_g = _latest_daily_weight_g(trend)
 
     return {
-        "latest_kg": round(weight_g / 1000, 1) if isinstance(weight_g, (int, float)) else None,
-        "trend": trend if isinstance(trend, list) else [],
+        "latest_kg": round(latest_weight_g / 1000, 1) if isinstance(latest_weight_g, (int, float)) else None,
+        "avg_30d_kg": round(avg_weight_g / 1000, 1) if isinstance(avg_weight_g, (int, float)) else None,
+        "trend": trend,
     }
 
 
@@ -385,11 +431,15 @@ def delete_workout(g, workout_id) -> dict:
 
 
 def garmin_prs(g):
-    """Personal records as [{"label": ..., "value": ...}, ...]."""
+    """Personal records as [{"type_id": ..., "value": ...}, ...].
+
+    `prTypeLabelKey` comes back null live, so it's dropped rather than
+    shipping an unreliable/always-null "label" field.
+    """
     prs = _safe(g.get_personal_record)
     if not isinstance(prs, list):
         return []
-    return [{"label": p.get("prTypeLabelKey"), "value": p.get("value")}
+    return [{"type_id": p.get("typeId"), "value": p.get("value")}
             for p in prs if isinstance(p, dict)]
 
 

@@ -6,7 +6,9 @@ class FakeG:
     def get_training_status(self, d): return {"mostRecentVO2Max":{"generic":{"vo2MaxPreciseValue":52.3}},
         "mostRecentTrainingLoadBalance":{"metricsTrainingLoadBalanceDTOMap":{"x":{"trainingBalanceFeedbackPhrase":"BALANCED"}}},
         "mostRecentTrainingStatus":{"latestTrainingStatusData":{"dev1":{"trainingStatusFeedbackPhrase":"PRODUCTIVE_1"}}}}
-    def get_weigh_ins(self, s, e): return {"totalAverage":{"weight":68500.0}, "dailyWeightSummaries":[{"summaryDate":"2026-07-08"}]}
+    def get_weigh_ins(self, s, e): return {"totalAverage":{"weight":68500.0}, "dailyWeightSummaries":[
+        {"summaryDate":"2026-07-01","latestWeight":{"weight":69000.0}},
+        {"summaryDate":"2026-07-08","latestWeight":{"weight":68200.0}}]}
     def get_personal_record(self): return [{"typeId":1,"activityType":"running","value":1490,"prTypeLabelKey":"PR_5K"}]
 
 
@@ -24,12 +26,14 @@ def test_training_trajectory():
 
 def test_weight_series_grams_to_kg():
     w = garmin.weight_series(FakeG(), "2026-07-08")
-    assert w["latest_kg"] == 68.5
+    assert w["latest_kg"] == 68.2   # true latest (most-recent dailyWeightSummaries entry)
+    assert w["avg_30d_kg"] == 68.5  # the old "totalAverage" range average
 
 
 def test_garmin_prs():
     p = garmin.garmin_prs(FakeG())
-    assert p[0]["label"] == "PR_5K" and p[0]["value"] == 1490
+    assert p[0] == {"type_id": 1, "value": 1490}
+    assert "label" not in p[0]
 
 
 def test_coach_snapshot_groups_and_never_raises():

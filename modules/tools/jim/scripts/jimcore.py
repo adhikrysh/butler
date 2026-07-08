@@ -192,7 +192,7 @@ def easy_run_too_hard(session: dict, z2_ceiling_hr) -> bool:
     return hr > ceiling
 
 
-def deload_due(recent_sessions: list[dict], recovery: dict) -> bool:
+def deload_due(recovery: dict) -> bool:
     """True if recovery signals elevated fatigue (low readiness score or poor HRV status)."""
     if not recovery:
         return False

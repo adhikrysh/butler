@@ -100,12 +100,13 @@ Garmin account. On his yes:
 ```
 uv run .../jim.py push-plan
 ```
-This schedules each programme day across the next 7 days. Running/riding days
-get their own sport type; strength days push honestly — a named workout with
+This schedules each programme day across the coming days, in order. Running/riding
+days get their own sport type; strength days push honestly — a named workout with
 the day's sets/reps/load in the **description**, not faked structured-strength
 precision (Garmin doesn't model that cleanly). Report the JSON summary
 (`day, workout_id, scheduled_date, ok`) plainly, including any day that failed
-— never claim a push succeeded when `ok` is false.
+— never claim a push succeeded when `ok` is false. Re-running adds new copies
+(it doesn't dedup) — mention that before pushing again.
 
 ## Progress — real numbers
 ```
