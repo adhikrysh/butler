@@ -12,7 +12,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 TOKEN_DIR = os.environ.get(
     "BUTLER_GARMIN_TOKENS", os.path.expanduser("~/.hermes/profiles/butler/garmin_tokens"))
@@ -134,3 +134,153 @@ def activity_detail(g, activity_id):
 def training_readiness(g, date_str):
     """Today's training readiness list (or [])."""
     return _safe(g.get_training_readiness, date_str) or []
+
+
+# ---- coach_snapshot: best-effort recovery + fitness-trajectory + body read layer ----
+#
+# Every g.get_* call is wrapped in _safe (never raises). Every dict/list access
+# defensively falls back to {}/[] so a surprising shape can't raise either.
+# coach_snapshot() itself wraps each of the three groups so one group's total
+# failure (a bug, not just a missing field) can't take the other two down.
+
+def _latest_training_readiness(g, date_str):
+    """Most recent training-readiness entry for the day (or {})."""
+    tr_list = _safe(g.get_training_readiness, date_str)
+    if not isinstance(tr_list, list) or not tr_list:
+        return {}
+    try:
+        return max((x for x in tr_list if isinstance(x, dict)),
+                    key=lambda x: x.get("timestamp", ""), default={})
+    except Exception:
+        return {}
+
+
+def recovery_snapshot(g, date_str):
+    """Readiness/body-battery/sleep/HRV/RHR/stress subset (mirrors
+    garmin-dashboard's garmincore.curate() field paths)."""
+    s = _safe(g.get_stats, date_str)
+    s = s if isinstance(s, dict) else {}
+    sleep = _safe(g.get_sleep_data, date_str)
+    sleep = sleep if isinstance(sleep, dict) else {}
+    sdto = sleep.get("dailySleepDTO")
+    sdto = sdto if isinstance(sdto, dict) else {}
+    hrv = _safe(g.get_hrv_data, date_str)
+    hrv = hrv if isinstance(hrv, dict) else {}
+    hrv_sum = hrv.get("hrvSummary")
+    hrv_sum = hrv_sum if isinstance(hrv_sum, dict) else {}
+    tr = _latest_training_readiness(g, date_str)
+    sleep_scores = sdto.get("sleepScores")
+    sleep_overall = sleep_scores.get("overall") if isinstance(sleep_scores, dict) else None
+
+    return {
+        "readiness_score": tr.get("score"),
+        "readiness_level": tr.get("level"),
+        "recovery_time_hours": tr.get("recoveryTime"),
+        "body_battery_recent": s.get("bodyBatteryMostRecentValue"),
+        "body_battery_high": s.get("bodyBatteryHighestValue"),
+        "body_battery_low": s.get("bodyBatteryLowestValue"),
+        "sleep_score": sleep_overall.get("value") if isinstance(sleep_overall, dict) else None,
+        "hrv_last_night_ms": hrv_sum.get("lastNightAvg"),
+        "hrv_status": hrv_sum.get("status"),
+        "resting_hr_bpm": s.get("restingHeartRate"),
+        "stress_avg": s.get("averageStressLevel"),
+    }
+
+
+def race_predictions(g):
+    """Predicted race times (seconds) at 5K/10K/half/marathon distances."""
+    r = _safe(g.get_race_predictions)
+    r = r if isinstance(r, dict) else {}
+    return {
+        "5k_sec": r.get("time5K"),
+        "10k_sec": r.get("time10K"),
+        "half_marathon_sec": r.get("timeHalfMarathon"),
+        "marathon_sec": r.get("timeMarathon"),
+    }
+
+
+def training_trajectory(g, date_str):
+    """VO2max + training-status + load-balance feedback for the given date."""
+    ts = _safe(g.get_training_status, date_str)
+    ts = ts if isinstance(ts, dict) else {}
+
+    vo2max = ts.get("mostRecentVO2Max")
+    vo2 = (vo2max.get("generic") if isinstance(vo2max, dict) else None) or {}
+
+    load_bal = ts.get("mostRecentTrainingLoadBalance")
+    lb_map = (load_bal.get("metricsTrainingLoadBalanceDTOMap")
+              if isinstance(load_bal, dict) else None) or {}
+    lb = next(iter(lb_map.values()), {}) if isinstance(lb_map, dict) else {}
+    lb = lb if isinstance(lb, dict) else {}
+
+    status = ts.get("mostRecentTrainingStatus")
+    lts = (status.get("latestTrainingStatusData") if isinstance(status, dict) else None) or {}
+    ts_dev = next(iter(lts.values()), {}) if isinstance(lts, dict) else {}
+    ts_dev = ts_dev if isinstance(ts_dev, dict) else {}
+
+    return {
+        "vo2max": vo2.get("vo2MaxPreciseValue") if vo2.get("vo2MaxPreciseValue") is not None else vo2.get("vo2MaxValue"),
+        "training_status": ts_dev.get("trainingStatusFeedbackPhrase"),
+        "load_balance": lb.get("trainingBalanceFeedbackPhrase"),
+    }
+
+
+def weight_series(g, date_str, days=30):
+    """Weight trend over the trailing `days` window ending on date_str."""
+    try:
+        end_dt = datetime.strptime(date_str, "%Y-%m-%d")
+        start_str = (end_dt - timedelta(days=days)).strftime("%Y-%m-%d")
+    except Exception:
+        start_str = date_str
+
+    w = _safe(g.get_weigh_ins, start_str, date_str)
+    w = w if isinstance(w, dict) else {}
+    avg = w.get("totalAverage")
+    avg = avg if isinstance(avg, dict) else {}
+    weight_g = avg.get("weight")
+    trend = w.get("dailyWeightSummaries")
+
+    return {
+        "latest_kg": round(weight_g / 1000, 1) if isinstance(weight_g, (int, float)) else None,
+        "trend": trend if isinstance(trend, list) else [],
+    }
+
+
+def garmin_prs(g):
+    """Personal records as [{"label": ..., "value": ...}, ...]."""
+    prs = _safe(g.get_personal_record)
+    if not isinstance(prs, list):
+        return []
+    return [{"label": p.get("prTypeLabelKey"), "value": p.get("value")}
+            for p in prs if isinstance(p, dict)]
+
+
+def _group(fn, *a):
+    """Run one coach_snapshot group; never let it take the others down."""
+    try:
+        result = fn(*a)
+        return result if isinstance(result, dict) else {}
+    except Exception:
+        return {}
+
+
+def _fitness_snapshot(g, date_str):
+    return {**training_trajectory(g, date_str), "race_predictions": race_predictions(g)}
+
+
+def _body_snapshot(g, date_str):
+    return {**weight_series(g, date_str), "prs": garmin_prs(g)}
+
+
+def coach_snapshot(g, date_str):
+    """Best-effort coaching read: recovery + fitness trajectory + body/records.
+
+    Never raises, even if every underlying Garmin call throws — each group
+    degrades to {} independently so a Garmin outage never blanks the whole
+    picture.
+    """
+    return {
+        "recovery": _group(recovery_snapshot, g, date_str),
+        "fitness": _group(_fitness_snapshot, g, date_str),
+        "body": _group(_body_snapshot, g, date_str),
+    }
