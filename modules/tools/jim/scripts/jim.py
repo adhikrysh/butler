@@ -24,17 +24,61 @@ import jimcore                 # noqa: E402
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
-def _garmin_readiness():
+def _garmin_coach_snapshot(today):
+    """Best-effort: full recovery + fitness-trajectory + body snapshot for `current`."""
     try:
         g = gm.client()
-        today = datetime.now(PACIFIC).date().isoformat()
-        tr = gm.training_readiness(g, today)
-        best = max(tr, key=lambda x: x.get("timestamp", "")) if tr else {}
-        sync_ms, dev = gm.last_sync(g)
-        return {"readiness": best.get("score"), "level": best.get("level"),
-                "last_sync_ms": sync_ms, "device": dev}
+        return gm.coach_snapshot(g, today)
     except Exception as exc:
-        return {"garmin_error": str(exc)}
+        return {"error": str(exc)}
+
+
+def _garmin_progress(today):
+    """Best-effort: weight/race/training-trajectory block for `progress`."""
+    try:
+        g = gm.client()
+    except Exception as exc:
+        return {"error": str(exc)}
+    return {
+        "weight": _safe_call(gm.weight_series, g, today),
+        "race_predictions": _safe_call(gm.race_predictions, g),
+        "training": _safe_call(gm.training_trajectory, g, today),
+    }
+
+
+def _safe_call(fn, *a):
+    try:
+        return fn(*a)
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def _latest_weight_kg(today):
+    """Best-effort: current bodyweight from Garmin, or None if unavailable."""
+    try:
+        g = gm.client()
+        return gm.weight_series(g, today).get("latest_kg")
+    except Exception:
+        return None
+
+
+def _with_garmin_bodyweight(goals, today):
+    """Reflect a live Garmin bodyweight reading on any `bodyweight` goal.
+
+    Best-effort and non-mutating to the DB: only annotates the returned JSON
+    (adds `current_garmin`, and prefers it as `current` when present).
+    """
+    if not any(gl.get("metric") == "bodyweight" for gl in goals):
+        return goals
+    latest_kg = _latest_weight_kg(today)
+    if latest_kg is None:
+        return goals
+    out = []
+    for gl in goals:
+        if gl.get("metric") == "bodyweight":
+            gl = {**gl, "current_garmin": latest_kg, "current": latest_kg}
+        out.append(gl)
+    return out
 
 
 def _enrich_session(rec):
@@ -84,19 +128,22 @@ def main() -> int:
 
     elif args.cmd == "current":
         recs = s.set_records()
+        today = datetime.now(PACIFIC).date().isoformat()
         print(json.dumps({
             "programme": jimcore.latest_active(s.programmes()),
-            "goals": jimcore.active_goals(s.goals()),
+            "goals": _with_garmin_bodyweight(jimcore.active_goals(s.goals()), today),
             "recent_sessions": s.sessions()[-7:],
             "prs": {"lifts": jimcore.compute_prs(recs), "cardio": jimcore.compute_cardio_prs(s.sessions())},
-            "garmin": _garmin_readiness(),
+            "garmin": _garmin_coach_snapshot(today),
         }, indent=2, ensure_ascii=False, default=str))
 
     elif args.cmd == "progress":
         recs = s.set_records()
+        today = datetime.now(PACIFIC).date().isoformat()
         out = {"prs": {"lifts": jimcore.compute_prs(recs), "cardio": jimcore.compute_cardio_prs(s.sessions())},
                "adherence": jimcore.weekly_adherence(s.sessions(),
-                            jimcore.latest_active(s.programmes()) or {}, datetime.now(PACIFIC).date())}
+                            jimcore.latest_active(s.programmes()) or {}, datetime.now(PACIFIC).date()),
+               "garmin": _garmin_progress(today)}
         if args.exercise:
             out["progression"] = jimcore.progression(recs, args.exercise)
         print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
