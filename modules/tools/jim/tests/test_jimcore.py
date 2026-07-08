@@ -4,7 +4,7 @@ from jimcore import (e1rm, exercise_metrics, session_volume, compute_prs, progre
                      weekly_adherence, render_summary, render_plan_text,
                      latest_active, active_goals, SESSION_TYPES, CARDIO_TYPES,
                      training_age, weekly_muscle_volume, progression_stalled,
-                     easy_run_too_hard, deload_due, MUSCLE_MAP)
+                     easy_run_too_hard, deload_due, MUSCLE_MAP, READINESS_DELOAD_THRESHOLD)
 
 
 def test_e1rm():
@@ -196,3 +196,43 @@ def test_deload_due_on_low_readiness_or_hrv():
     assert deload_due([], {"readiness_score": 70, "hrv_status": "BALANCED"}) is False
     assert deload_due([], {}) is False
     assert deload_due([], None) is False
+
+
+# ---- Task 6 review follow-up: close coverage gaps on already-correct branches ----
+
+# 30 distinct Mon-Sun weeks: >= INTERMEDIATE_WEEKS_THRESHOLD (24) but far short of the
+# ADVANCED_WEEKS_THRESHOLD (104) week-span cutoff.
+_FREQ_ONLY_DATES = _weeks(30)
+_FREQ_ONLY_SESSIONS = [{"date": d, "type": "strength"} for d in _FREQ_ONLY_DATES]
+# Squat weight climbs every week, so e1RM (via the real e1rm()) is strictly increasing ->
+# progression_stalled() is False. Any "intermediate" verdict here must come from the
+# distinct-weeks branch alone, not the stall branch.
+_FREQ_ONLY_PROGRESSING_SQUAT = [
+    {"exercise": "squat", "e1rm": e1rm(100 + 5 * i, 5), "date": d}
+    for i, d in enumerate(_FREQ_ONLY_DATES)
+]
+
+
+def test_training_age_intermediate_via_frequency_alone_no_stall():
+    assert progression_stalled(_FREQ_ONLY_PROGRESSING_SQUAT, "squat") is False
+    assert training_age(_FREQ_ONLY_SESSIONS, _FREQ_ONLY_PROGRESSING_SQUAT) == "intermediate"
+
+
+def test_weekly_muscle_volume_buckets_unmapped_exercise_as_other():
+    assert "face pull" not in MUSCLE_MAP  # confirm it's genuinely unmapped
+    records = [
+        {"exercise": "face pull", "date": "2026-07-06T18:00"},
+        {"exercise": "face pull", "date": "2026-07-07T18:00"},
+        {"exercise": "squat", "date": "2026-07-08T18:00"},
+    ]
+    vol = weekly_muscle_volume(records, date(2026, 7, 8))
+    assert vol["other"] == 2
+    assert vol["quads"] == 1
+
+
+def test_deload_due_readiness_boundary():
+    # Exactly at the threshold is NOT due (strict "<" in the implementation); one point
+    # below IS due; one point above is not. Guards against a future "<" -> "<=" flip.
+    assert deload_due([], {"readiness_score": READINESS_DELOAD_THRESHOLD}) is False
+    assert deload_due([], {"readiness_score": READINESS_DELOAD_THRESHOLD - 1}) is True
+    assert deload_due([], {"readiness_score": READINESS_DELOAD_THRESHOLD + 1}) is False
