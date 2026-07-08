@@ -131,6 +131,53 @@ def activity_detail(g, activity_id):
     return _safe(g.get_activity, activity_id) or {}
 
 
+# ---- session enrichment: fill a logged session from its Garmin activity ----
+
+_CARDIO_TYPES = {"run", "ride", "swim"}
+
+_TYPE_KEYWORDS = {
+    "strength": ("strength",),
+    "run": ("run",),
+    "ride": ("cycl", "bik"),
+    "swim": ("swim",),
+    "mobility": ("yoga", "pilates", "mobility"),
+}
+
+
+def enrich_session(g, session, sync_cmd=None):
+    """Best-effort: fill a logged session (any type, strength included) from
+    its matching same-day Garmin activity.
+
+    Matches by `session["garmin_activity_id"]` if set, else by a type ->
+    activity-type-keyword lookup, else falls back to the day's only activity
+    (if there's exactly one). Fills `duration_min, avg_hr, max_hr, calories,
+    aerobic_te, anaerobic_te` (+ `distance_km` for cardio types), only where
+    the session field is currently empty. Never raises — on any failure the
+    session is returned unchanged.
+    """
+    try:
+        if sync_cmd:
+            ensure_fresh_sync(g, trigger_cmd=sync_cmd)
+        day = session.get("date") or datetime.now(timezone.utc).astimezone().date().isoformat()
+        acts = [summarize_activity(a) for a in activities(g, day, day)]
+        want = session.get("garmin_activity_id")
+        kw = _TYPE_KEYWORDS.get(session.get("type"), ())
+        typed = [a for a in acts if any(k in str(a.get("type") or "").lower() for k in kw)]
+        m = (next((a for a in acts if str(a["garmin_activity_id"]) == str(want)), None) if want
+             else (typed[-1] if typed else (acts[0] if len(acts) == 1 else None)))
+        if m:
+            session.setdefault("garmin_activity_id", m["garmin_activity_id"])
+            fields = ["duration_min", "avg_hr", "max_hr", "calories", "aerobic_te", "anaerobic_te"]
+            if session.get("type") in _CARDIO_TYPES:
+                fields.append("distance_km")
+            for k in fields:
+                if not session.get(k) and m.get(k) is not None:
+                    session[k] = m[k]
+    except Exception:
+        pass
+    return session
+
+
 def training_readiness(g, date_str):
     """Today's training readiness list (or [])."""
     return _safe(g.get_training_readiness, date_str) or []

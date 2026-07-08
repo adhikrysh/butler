@@ -37,25 +37,15 @@ def _garmin_readiness():
         return {"garmin_error": str(exc)}
 
 
-def _enrich_cardio(rec):
-    """Best-effort: fill distance/HR/calories/duration + bodyweight from the FR955."""
+def _enrich_session(rec):
+    """Best-effort: fill session fields from the matching Garmin activity.
+
+    Wraps client acquisition too, so a Garmin-down state never blocks the
+    DB write — any failure just leaves `rec` unchanged.
+    """
     try:
         g = gm.client()
-        gm.ensure_fresh_sync(g, trigger_cmd=os.environ.get("JIM_SYNC_CMD"),
-                             timeout=int(os.environ.get("JIM_SYNC_TIMEOUT", "60")),
-                             poll=int(os.environ.get("JIM_SYNC_POLL", "10")))
-        today = datetime.now(PACIFIC).date().isoformat()
-        acts = [gm.summarize_activity(a) for a in gm.activities(g, today, today)]
-        want = rec.get("garmin_activity_id")
-        kw = {"run": ("run",), "ride": ("cycl", "bik"), "swim": ("swim",)}.get(rec.get("type"), ())
-        typed = [a for a in acts if any(k in str(a.get("type") or "").lower() for k in kw)]
-        m = (next((a for a in acts if str(a["garmin_activity_id"]) == str(want)), None) if want
-             else (typed[-1] if typed else (acts[0] if len(acts) == 1 else None)))
-        if m:
-            rec.setdefault("garmin_activity_id", m["garmin_activity_id"])
-            for k in ("distance_km", "avg_hr", "calories", "duration_min"):
-                if not rec.get(k) and m.get(k) is not None:
-                    rec[k] = m[k]
+        return gm.enrich_session(g, rec, sync_cmd=os.environ.get("JIM_SYNC_CMD"))
     except Exception as exc:
         print(f"garmin enrich skipped: {exc}", file=sys.stderr)
     return rec
@@ -77,8 +67,7 @@ def main() -> int:
     if args.cmd == "log":
         rec = json.loads(args.payload)
         exercises = rec.pop("exercises", [])
-        if rec.get("type") in jimcore.CARDIO_TYPES:
-            rec = _enrich_cardio(rec)
+        rec = _enrich_session(rec)
         sid = s.log_session(rec, exercises)
         print(json.dumps({"logged_session": sid, "type": rec.get("type")}, ensure_ascii=False))
 

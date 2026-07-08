@@ -39,3 +39,37 @@ def test_coach_snapshot_groups_and_never_raises():
             return f
     snap = garmin.coach_snapshot(Boom(), "2026-07-08")
     assert set(snap.keys()) == {"recovery","fitness","body"}   # degrades, doesn't raise
+
+
+class FakeStrengthG:
+    def get_activities_by_date(self, start, end):
+        return [{
+            "activityId": 555,
+            "activityName": "Strength",
+            "activityType": {"typeKey": "strength_training"},
+            "startTimeLocal": "2026-07-08 07:00:00",
+            "duration": 3000,
+            "averageHR": 121,
+            "maxHR": 150,
+            "calories": 310,
+            "aerobicTrainingEffect": 1.8,
+            "anaerobicTrainingEffect": 2.4,
+        }]
+
+
+def test_enrich_session_fills_strength_from_garmin():
+    session = {"type": "strength", "date": "2026-07-08"}
+    enriched = garmin.enrich_session(FakeStrengthG(), session)
+    assert enriched is session
+    assert enriched["avg_hr"] == 121
+    assert enriched["calories"] == 310
+
+
+def test_enrich_session_never_raises_on_client_failure():
+    class Boom:
+        def __getattr__(self, n):
+            def f(*a, **k): raise RuntimeError("garmin down")
+            return f
+    session = {"type": "strength", "date": "2026-07-08"}
+    result = garmin.enrich_session(Boom(), session)
+    assert result == {"type": "strength", "date": "2026-07-08"}
