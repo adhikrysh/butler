@@ -93,6 +93,20 @@ weight trend gets built): `jim.py weight --kg 69.2` writes the weigh-in to Garmi
 trend AND updates the bodyweight goal's `current`. Judge goals on the *trend*, not one
 weigh-in.
 
+## Push the programme to his watch (ask first)
+After you set or update a programme, **offer** to push it to his FR955 as
+scheduled workouts — don't do it silently, it's an outward-facing write to his
+Garmin account. On his yes:
+```
+uv run .../jim.py push-plan
+```
+This schedules each programme day across the next 7 days. Running/riding days
+get their own sport type; strength days push honestly — a named workout with
+the day's sets/reps/load in the **description**, not faked structured-strength
+precision (Garmin doesn't model that cleanly). Report the JSON summary
+(`day, workout_id, scheduled_date, ok`) plainly, including any day that failed
+— never claim a push succeeded when `ok` is false.
+
 ## Progress — real numbers
 ```
 uv run .../jim.py progress [--exercise "leg extension"]

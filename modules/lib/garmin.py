@@ -307,6 +307,83 @@ def log_weight(g, kg, ts=None) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+# ---- programme -> watch: named workout + description (honest degradation) ----
+#
+# Garmin's structured-workout schema can encode running/cycling steps cleanly,
+# but strength is modeled loosely (sets/reps aren't first-class there in a way
+# worth faking). Rather than force strength into a fake structured shape, we
+# push ONE minimal valid step and put the day's real plan in the description —
+# honest, readable on the watch/app, and fully reversible (unschedule/delete).
+
+_SPORT = {
+    "running": {"sportTypeId": 1, "sportTypeKey": "running"},
+    "strength": {"sportTypeId": 5, "sportTypeKey": "strength_training"},
+    "cycling": {"sportTypeId": 2, "sportTypeKey": "cycling"},
+}
+
+
+def build_workout(name, sport_key, description) -> dict:
+    """A minimal valid Garmin workout: one open (lap-button) step, the day's
+    plan carried in `description`. No faked structured-strength precision."""
+    sport = _SPORT.get(sport_key, _SPORT["strength"])
+    return {
+        "workoutName": (name or "")[:80],
+        "description": (description or "")[:1024],
+        "sportType": sport,
+        "workoutSegments": [{
+            "segmentOrder": 1,
+            "sportType": sport,
+            "workoutSteps": [{
+                "type": "ExecutableStepDTO",
+                "stepOrder": 1,
+                "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
+                "endCondition": {"conditionTypeId": 1, "conditionTypeKey": "lap.button"},
+                "targetType": {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target"},
+            }],
+        }],
+    }
+
+
+def push_workout(g, name, sport_key, description) -> dict:
+    """Best-effort: upload a named workout (plan in description). Never raises.
+
+    Returns {"ok": True, "workout_id": <id>} or {"ok": False, "error": str}.
+    """
+    try:
+        res = g.upload_workout(build_workout(name, sport_key, description))
+        wid = (res or {}).get("workoutId") if isinstance(res, dict) else None
+        return {"ok": True, "workout_id": wid}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def schedule(g, workout_id, date_str) -> dict:
+    """Best-effort: schedule an uploaded workout on a date. Never raises."""
+    try:
+        res = g.schedule_workout(workout_id, date_str)
+        return {"ok": True, "result": res}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def unschedule(g, scheduled_id) -> dict:
+    """Best-effort: remove a scheduled workout occurrence. Never raises."""
+    try:
+        res = g.unschedule_workout(scheduled_id)
+        return {"ok": True, "result": res}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def delete_workout(g, workout_id) -> dict:
+    """Best-effort: delete a workout definition entirely. Never raises."""
+    try:
+        res = g.delete_workout(workout_id)
+        return {"ok": True, "result": res}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def garmin_prs(g):
     """Personal records as [{"label": ..., "value": ...}, ...]."""
     prs = _safe(g.get_personal_record)

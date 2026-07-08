@@ -95,6 +95,70 @@ def _enrich_session(rec):
     return rec
 
 
+def _day_description(day):
+    """'squat 4x5 @RPE8; leg ext 4x8; ...' from a programme day's exercises."""
+    parts = []
+    for e in day.get("exercises", []):
+        chunk = f"{e.get('exercise', '')} {e.get('sets', '')}x{e.get('reps', '')}".strip()
+        if e.get("load"):
+            chunk += f" @{e['load']}"
+        parts.append(chunk)
+    return "; ".join(parts)
+
+
+def _sport_key_for(focus):
+    f = str(focus or "").lower()
+    if "run" in f:
+        return "running"
+    if "ride" in f or "bike" in f or "cycl" in f:
+        return "cycling"
+    return "strength"
+
+
+def _push_plan(s):
+    """Best-effort: push each day of the active programme as a named,
+    described Garmin workout, scheduled across the next 7 days in order.
+
+    Honest degradation: no faked structured-strength precision, one minimal
+    valid step per workout, the real plan lives in the description. A Garmin
+    failure on any day yields ok:false for that day and never crashes.
+    """
+    from datetime import timedelta
+    prog = jimcore.latest_active(s.programmes())
+    if not prog:
+        return {"error": "no active programme"}
+    try:
+        plan = json.loads(prog.get("plan_json") or "{}")
+    except Exception as exc:
+        return {"error": f"bad plan_json: {exc}"}
+    days = plan.get("days", [])
+    try:
+        g = gm.client()
+    except Exception as exc:
+        return {"error": str(exc), "results": [
+            {"day": d.get("day"), "ok": False} for d in days]}
+    today = datetime.now(PACIFIC).date()
+    results = []
+    for i, day in enumerate(days):
+        name = f"{plan.get('name', 'Programme')} — {day.get('day', '')}/{day.get('focus', '')}"[:80]
+        desc = _day_description(day)
+        sport_key = _sport_key_for(day.get("focus"))
+        push_res = _safe_call(gm.push_workout, g, name, sport_key, desc)
+        entry = {"day": day.get("day"), "focus": day.get("focus"), "ok": push_res.get("ok", False)}
+        wid = push_res.get("workout_id")
+        entry["workout_id"] = wid
+        sched_date = (today + timedelta(days=i)).isoformat()
+        if push_res.get("ok") and wid:
+            sched_res = _safe_call(gm.schedule, g, wid, sched_date)
+            entry["scheduled_date"] = sched_date if sched_res.get("ok") else None
+            entry["ok"] = entry["ok"] and sched_res.get("ok", False)
+        else:
+            entry["scheduled_date"] = None
+            entry["error"] = push_res.get("error")
+        results.append(entry)
+    return {"results": results}
+
+
 def main() -> int:
     p = argparse.ArgumentParser(prog="jim")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -103,7 +167,7 @@ def main() -> int:
     gu = sub.add_parser("goal-update"); gu.add_argument("--match", required=True); gu.add_argument("--json", required=True, dest="payload")
     pr = sub.add_parser("progress"); pr.add_argument("--exercise", default=None)
     wt = sub.add_parser("weight"); wt.add_argument("--kg", required=True, type=float)
-    for name in ("current", "prs", "dump", "resync"):
+    for name in ("current", "prs", "dump", "resync", "push-plan"):
         sub.add_parser(name)
 
     args = p.parse_args()
@@ -176,6 +240,9 @@ def main() -> int:
     elif args.cmd == "resync":
         s.render_sheets()
         print(json.dumps({"resynced": len(s.sessions())}))
+
+    elif args.cmd == "push-plan":
+        print(json.dumps(_push_plan(s), ensure_ascii=False))
 
     return 0
 

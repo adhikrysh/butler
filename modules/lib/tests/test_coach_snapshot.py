@@ -103,3 +103,44 @@ def test_log_weight_calls_add_weigh_in_with_kg():
 def test_log_weight_never_raises_on_failure():
     result = garmin.log_weight(BoomWeighInG(), 69.2)
     assert result == {"ok": False, "error": "garmin down"}
+
+
+def test_build_workout_shape():
+    w = garmin.build_workout("Leg day", "strength", "squat 4x5")
+    assert w["workoutName"] == "Leg day"
+    assert w["description"] == "squat 4x5"
+    assert w["sportType"]["sportTypeKey"] == "strength_training"
+    assert len(w["workoutSegments"]) == 1
+    steps = w["workoutSegments"][0]["workoutSteps"]
+    assert len(steps) == 1
+    step = steps[0]
+    assert step["type"] == "ExecutableStepDTO"
+    assert step["endCondition"]["conditionTypeKey"] == "lap.button"
+    assert step["targetType"]["workoutTargetTypeKey"] == "no.target"
+
+
+class FakeWorkoutG:
+    def __init__(self):
+        self.calls = []
+
+    def upload_workout(self, workout_json):
+        self.calls.append(workout_json)
+        return {"workoutId": 12345}
+
+
+class BoomWorkoutG:
+    def upload_workout(self, workout_json):
+        raise RuntimeError("garmin down")
+
+
+def test_push_workout_ok():
+    fake = FakeWorkoutG()
+    result = garmin.push_workout(fake, "Leg day", "strength", "squat 4x5")
+    assert result == {"ok": True, "workout_id": 12345}
+    assert fake.calls[0]["workoutName"] == "Leg day"
+
+
+def test_push_workout_never_raises_on_failure():
+    result = garmin.push_workout(BoomWorkoutG(), "Leg day", "strength", "squat 4x5")
+    assert result["ok"] is False
+    assert "garmin down" in result["error"]
