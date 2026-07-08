@@ -90,7 +90,7 @@ def main() -> int:
 
     elif args.cmd == "goal-update":
         res = s.update_goal(json.loads(args.match), json.loads(args.payload))
-        print(json.dumps(res, ensure_ascii=False) if res else "no matching goal")
+        print(json.dumps(res, ensure_ascii=False) if res else json.dumps({"updated": None}))
 
     elif args.cmd == "current":
         recs = s.set_records()
@@ -98,13 +98,13 @@ def main() -> int:
             "programme": jimcore.latest_active(s.programmes()),
             "goals": jimcore.active_goals(s.goals()),
             "recent_sessions": s.sessions()[-7:],
-            "prs": jimcore.compute_prs(recs),
+            "prs": {"lifts": jimcore.compute_prs(recs), "cardio": jimcore.compute_cardio_prs(s.sessions())},
             "garmin": _garmin_readiness(),
         }, indent=2, ensure_ascii=False, default=str))
 
     elif args.cmd == "progress":
         recs = s.set_records()
-        out = {"prs": jimcore.compute_prs(recs),
+        out = {"prs": {"lifts": jimcore.compute_prs(recs), "cardio": jimcore.compute_cardio_prs(s.sessions())},
                "adherence": jimcore.weekly_adherence(s.sessions(),
                             jimcore.latest_active(s.programmes()) or {}, datetime.now(PACIFIC).date())}
         if args.exercise:
@@ -112,7 +112,7 @@ def main() -> int:
         print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
 
     elif args.cmd == "prs":
-        print(json.dumps(jimcore.compute_prs(s.set_records()), indent=2, ensure_ascii=False, default=str))
+        print(json.dumps({"lifts": jimcore.compute_prs(s.set_records()), "cardio": jimcore.compute_cardio_prs(s.sessions())}, indent=2, ensure_ascii=False, default=str))
 
     elif args.cmd == "dump":
         print(json.dumps({"sessions": s.sessions(), "sets": s.set_records(),

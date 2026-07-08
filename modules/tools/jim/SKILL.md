@@ -29,10 +29,11 @@ Cardio: `{"type":"run","title":"Easy 10k"}` — jim auto-fills distance/HR/pace 
 When he states goals/constraints (e.g. "75 kg, gym 5×/week, 1 hr"), design a weekly
 split and STORE it, and record the goals:
 ```
-uv run .../jim.py plan --json '{"name":"Block A","freq_per_week":5,"days":[{"day":"A","focus":"legs","exercises":[{"exercise":"squat","sets":4,"reps":5,"load":"RPE8"},{"exercise":"leg extension","sets":4,"reps":8}]}, ...]}'
+uv run .../jim.py plan --json '{"name":"Block A","freq_per_week":5,"days":[{"day":"A","focus":"legs","exercises":[{"exercise":"squat","sets":4,"reps":5,"load":"RPE8"},{"exercise":"leg extension","sets":4,"reps":8}]}]}'
 uv run .../jim.py goal --json '{"metric":"bodyweight","target":"75","current":"68","unit":"kg","deadline":"2026-12-01"}'
 ```
 Never leave him without a stored programme.
+Update a goal's current/status later: `jim.py goal-update --match '{"metric":"bodyweight"}' --json '{"current":"70","status":"active"}'`.
 
 ## Progress: `jim.py progress [--exercise "leg extension"]`
 Real numbers — per-exercise progression, weekly volume/frequency vs the programme

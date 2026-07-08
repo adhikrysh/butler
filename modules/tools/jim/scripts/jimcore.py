@@ -14,6 +14,13 @@ def _f(v):
         return None
 
 
+def _int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def e1rm(weight, reps) -> float:
     """Estimated 1-rep-max (Epley). A single rep IS the 1RM; Epley only for reps>1."""
     r = int(reps)
@@ -23,8 +30,8 @@ def e1rm(weight, reps) -> float:
 
 def exercise_metrics(sets: list[dict]) -> dict:
     """top_weight, best_e1rm, total volume, set count for one exercise's sets."""
-    ws = [(_f(s.get("weight")), s.get("reps")) for s in sets]
-    valid = [(w, int(r)) for w, r in ws if w is not None and r not in (None, "")]
+    pairs = [(_f(s.get("weight")), _int(s.get("reps"))) for s in sets]
+    valid = [(w, r) for w, r in pairs if w is not None and r is not None]
     top = max((w for w, _ in valid), default=None)
     e1s = [e1rm(w, r) for w, r in valid]
     vol = sum(w * r for w, r in valid)
@@ -127,3 +134,30 @@ def latest_active(programme_rows: list[dict]) -> dict | None:
 
 def active_goals(goal_rows: list[dict]) -> list[dict]:
     return [g for g in goal_rows if str(g.get("status", "active")).lower() == "active"]
+
+
+def _pace_bucket(distance_km: float):
+    """Largest standard distance this run covers (e.g. 6 km -> '5k'). +epsilon for float edges."""
+    for dist, label in reversed(_DIST_BUCKETS):
+        if distance_km + 1e-9 >= dist:
+            return label
+    return None
+
+
+def compute_cardio_prs(sessions: list[dict]) -> dict:
+    """Best (lowest) pace min/km per distance bucket, from cardio sessions with distance+duration."""
+    prs = {}
+    for s in sessions:
+        if s.get("type") not in CARDIO_TYPES:
+            continue
+        d, t = _f(s.get("distance_km")), _f(s.get("duration_min"))
+        if not d or not t or d <= 0:
+            continue
+        bucket = _pace_bucket(d)
+        if bucket is None:
+            continue
+        pace = round(t / d, 2)
+        if bucket not in prs or pace < prs[bucket]["pace_min_per_km"]:
+            prs[bucket] = {"pace_min_per_km": pace, "distance_km": d,
+                           "duration_min": t, "date": str(s.get("date", ""))[:10]}
+    return prs

@@ -78,3 +78,18 @@ def test_latest_active_and_active_goals():
 
 def test_type_constants():
     assert CARDIO_TYPES <= SESSION_TYPES
+
+
+def test_exercise_metrics_survives_bad_reps():
+    m = exercise_metrics([{"weight": 100, "reps": "8-10"}, {"weight": 80, "reps": 5}])
+    assert m["top_weight"] == 80.0 and m["best_e1rm"] == e1rm(80, 5)  # bad set skipped, no crash
+
+
+def test_compute_cardio_prs():
+    from jimcore import compute_cardio_prs
+    prs = compute_cardio_prs([
+        {"type": "run", "distance_km": 10.2, "duration_min": 52, "date": "2026-07-11T07:00"},
+        {"type": "run", "distance_km": 5.0, "duration_min": 27, "date": "2026-07-12T07:00"},
+        {"type": "strength", "distance_km": None, "duration_min": None, "date": "2026-07-13"}])
+    assert prs["10k"]["pace_min_per_km"] == round(52 / 10.2, 2)
+    assert prs["5k"]["pace_min_per_km"] == round(27 / 5.0, 2)

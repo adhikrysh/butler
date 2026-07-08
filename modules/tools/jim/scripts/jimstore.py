@@ -130,7 +130,10 @@ class JimStore:
             ex = str(e.get("exercise", "")).strip().lower()
             for i, st in enumerate(e.get("sets", []), start=1):
                 w, r = st.get("weight"), st.get("reps")
-                e1 = jimcore.e1rm(w, r) if (w is not None and r not in (None, "")) else None
+                try:
+                    e1 = jimcore.e1rm(w, r) if (w is not None and r not in (None, "")) else None
+                except (TypeError, ValueError):
+                    e1 = None
                 self._c.execute(
                     "INSERT INTO jim_sets(session_id,exercise,set_no,weight,reps,e1rm,created_at)"
                     " VALUES(?,?,?,?,?,?,?)", (sid, ex, i, w, r, e1, now))
@@ -163,6 +166,8 @@ class JimStore:
         return cur.lastrowid
 
     def update_goal(self, match: dict, changes: dict) -> dict | None:
+        if not match:
+            return None
         changes = {k: v for k, v in changes.items() if k in _GOAL_WRITABLE}
         if not changes:
             return None
